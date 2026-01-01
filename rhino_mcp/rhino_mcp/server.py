@@ -81,7 +81,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Create the MCP server with lifespan support
 app = FastMCP(
     "RhinoMCP",
-    description="Rhino integration through the Model Context Protocol",
+    instructions="Rhino integration through the Model Context Protocol",
     lifespan=server_lifespan
 )
 

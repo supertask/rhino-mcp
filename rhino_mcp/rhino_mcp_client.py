@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Rhino MCP - Rhino-side Script
 Handles communication with external MCP server and executes Rhino commands.
@@ -24,9 +25,51 @@ from datetime import datetime
 # Configuration
 HOST = 'localhost'
 PORT = 9876
+LANGUAGE = 'ja'  # 'en' for English, 'ja' for Japanese
 
 # Add constant for annotation layer
 ANNOTATION_LAYER = "MCP_Annotations"
+
+MESSAGES = {
+    'en': {
+        'server_already_running': "Server is already running",
+        'port_in_use': "Error: Port {0} is already in use!",
+        'check_other_instance': "Please check if another Rhino instance is running.",
+        'server_started': "RhinoMCP server started on {0}:{1}",
+        'start_failed': "Failed to start server: {0}",
+        'server_stopped': "RhinoMCP server stopped",
+        'client_connected': "Client connected from {0}:{1}",
+        'client_disconnected': "Client disconnected",
+        'response_sent': "Response sent successfully",
+        'scene_info_start': "Getting simplified scene info...",
+        'scene_info_success': "Simplified scene info collected successfully",
+        'script_loaded': "RhinoMCP script loaded. Server started automatically.",
+        'stop_instruction': "To stop the server, run: stop_server()"
+    },
+    'ja': {
+        'server_already_running': u"サーバーは既に起動しています",
+        'port_in_use': u"エラー: ポート {0} は既に使用されています！",
+        'check_other_instance': u"他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
+        'server_started': u"RhinoMCPサーバーを起動しました: {0}:{1}",
+        'start_failed': u"サーバーの起動に失敗しました: {0}",
+        'server_stopped': u"RhinoMCPサーバーを停止しました",
+        'client_connected': u"クライアントが接続しました: {0}:{1}",
+        'client_disconnected': u"クライアントが切断しました",
+        'response_sent': u"レスポンスを送信しました",
+        'scene_info_start': u"シーン情報を取得中...",
+        'scene_info_success': u"シーン情報の取得に成功しました",
+        'script_loaded': u"RhinoMCPスクリプトが読み込まれました。サーバーは自動的に起動しました。",
+        'stop_instruction': u"サーバーを停止するには、次を実行してください: stop_server()"
+    }
+}
+
+def get_message(key, *args):
+    """Get localized message"""
+    lang = MESSAGES.get(LANGUAGE, MESSAGES['en'])
+    msg = lang.get(key, MESSAGES['en'].get(key, key))
+    if args:
+        return msg.format(*args)
+    return msg
 
 VALID_METADATA_FIELDS = {
     'required': ['id', 'name', 'type', 'layer'],
@@ -77,6 +120,9 @@ def log_message(message):
         
         with open(log_file, "a") as f:
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            # Encode message to UTF-8 before writing to file
+            if isinstance(message, unicode):
+                message = message.encode('utf-8')
             f.write("[{0}] {1}\n".format(timestamp, message))
     except Exception as e:
         Rhino.RhinoApp.WriteLine("Failed to write to log file: {0}".format(str(e)))
@@ -91,7 +137,7 @@ class RhinoMCPServer:
     
     def start(self):
         if self.running:
-            log_message("Server is already running")
+            log_message(get_message('server_already_running'))
             return
             
         self.running = True
@@ -99,8 +145,22 @@ class RhinoMCPServer:
         try:
             # Create socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.socket.bind((self.host, self.port))
+            
+            # Windowsの場合、SO_REUSEADDR（ポートの再利用）を設定しないことで
+            # 重複起動時にしっかりとエラーが出るようにします
+            if platform.system() != "Windows":
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            
+            try:
+                self.socket.bind((self.host, self.port))
+            except socket.error as e:
+                log_message(get_message('port_in_use', self.port))
+                log_message(get_message('check_other_instance'))
+                # エラーを再送出してサーバー起動を中断させます
+                self.running = False
+                self.socket = None
+                return
+
             self.socket.listen(1)
             
             # Start server thread
@@ -108,9 +168,9 @@ class RhinoMCPServer:
             self.server_thread.daemon = True
             self.server_thread.start()
             
-            log_message("RhinoMCP server started on {0}:{1}".format(self.host, self.port))
+            log_message(get_message('server_started', self.host, self.port))
         except Exception as e:
-            log_message("Failed to start server: {0}".format(str(e)))
+            log_message(get_message('start_failed', str(e)))
             self.stop()
             
     def stop(self):
@@ -133,14 +193,14 @@ class RhinoMCPServer:
                 pass
             self.server_thread = None
         
-        log_message("RhinoMCP server stopped")
+        log_message(get_message('server_stopped'))
     
     def _server_loop(self):
         """Main server loop that accepts connections"""
         while self.running:
             try:
                 client, addr = self.socket.accept()
-                log_message("Client connected from {0}:{1}".format(addr[0], addr[1]))
+                log_message(get_message('client_connected', addr[0], addr[1]))
                 
                 # Handle client in a new thread
                 client_thread = threading.Thread(target=self._handle_client, args=(client,))
@@ -163,7 +223,7 @@ class RhinoMCPServer:
                 # Receive command with larger buffer
                 data = client.recv(14485760)  # 10MB buffer
                 if not data:
-                    log_message("Client disconnected")
+                    log_message(get_message('client_disconnected'))
                     break
                     
                 try:
@@ -181,7 +241,7 @@ class RhinoMCPServer:
                             for i in range(0, len(response_bytes), chunk_size):
                                 chunk = response_bytes[i:i + chunk_size]
                                 client.sendall(chunk)
-                            log_message("Response sent successfully")
+                            log_message(get_message('response_sent'))
                         except Exception as e:
                             log_message("Error executing command: {0}".format(str(e)))
                             traceback.print_exc()
@@ -272,7 +332,7 @@ class RhinoMCPServer:
                     "message": "No active document"
                 }
             
-            log_message("Getting simplified scene info...")
+            log_message(get_message('scene_info_start'))
             layers_info = []
             
             for layer in doc.Layers:
@@ -312,7 +372,7 @@ class RhinoMCPServer:
                 "layers": layers_info
             }
             
-            log_message("Simplified scene info collected successfully")
+            log_message(get_message('scene_info_success'))
             return response
             
         except Exception as e:
@@ -693,5 +753,5 @@ def stop_server():
 
 # Automatically start the server when this script is loaded
 start_server()
-log_message("RhinoMCP script loaded. Server started automatically.")
-log_message("To stop the server, run: stop_server()") 
+log_message(get_message('script_loaded'))
+log_message(get_message('stop_instruction')) 
