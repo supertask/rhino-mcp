@@ -1436,6 +1436,10 @@ def socket_server_thread():
                 # --- Process Command ---
                 command_data = parse_command(body_str)
                 result_dict = process_command(command_data) # Handles its own internal errors via sticky
+                
+                # Store command data and result in sticky for debugging (for debug component)
+                sc.sticky["commandData"] = command_data
+                sc.sticky["last_result"] = result_dict
 
                 # --- Send Response ---
                 status_code = 200

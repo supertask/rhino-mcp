@@ -189,10 +189,23 @@ class GrasshopperConnection:
             bool: True if the server is available, False otherwise
         """
         try:
-            response = requests.get(self.base_url, timeout=2.0)
+            # Use POST with test command instead of GET
+            data = {"type": "test", "message": "health_check"}
+            response = requests.post(
+                self.base_url, 
+                json=data,
+                timeout=2.0,
+                headers={'Content-Type': 'application/json'}
+            )
             response.raise_for_status()
-            logger.info("Grasshopper server is available at {0}".format(self.base_url))
-            return True
+            result = response.json()
+            # Check if response indicates success
+            if result.get("status") == "success":
+                logger.info("Grasshopper server is available at {0}".format(self.base_url))
+                return True
+            else:
+                logger.warning("Grasshopper server responded but with error status")
+                return False
         except Exception as e:
             logger.warning("Grasshopper server is not available: {0}".format(str(e)))
             return False
