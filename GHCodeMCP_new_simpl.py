@@ -2,6 +2,7 @@ import scriptcontext as sc
 import clr
 import socket
 import threading
+import select # Added select for robust checking
 import Rhino # Added
 import Rhino.Geometry as rg # Added from old
 import json
@@ -1168,7 +1169,7 @@ def process_command(command_data):
 
     try:
         # --- Test Command ---
-        if command_type == "test_command":
+        if command_type == "test_command" or command_type == "test":
             return {
                 "status": "success",
                 "result": {
@@ -1330,6 +1331,8 @@ def socket_server_thread():
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((HOST, PORT))
         server_socket.listen(5)
+        server_socket.setblocking(0) # Non-blocking mode for select
+
         sc.sticky["server_status"] = "Server listening on {}:{}".format(HOST, PORT)
         sc.sticky.pop("server_thread_error", None) # Clear previous thread error
 
@@ -1337,10 +1340,22 @@ def socket_server_thread():
             conn = None
             addr = None
             try:
-                server_socket.settimeout(1.0) # Timeout accept() to check run_server flag
-                conn, addr = server_socket.accept()
-                conn.settimeout(15.0) # Timeout for operations on this connection
-                sc.sticky["last_connection_addr"] = str(addr)
+                # Use select to wait for incoming connection or timeout (1.0s)
+                # This avoids Errno 22 and other timeout-related socket issues
+                readable, _, _ = select.select([server_socket], [], [], 1.0)
+                
+                if server_socket in readable:
+                    conn, addr = server_socket.accept()
+                    conn.setblocking(1) # Revert to blocking mode for data transfer
+                    conn.settimeout(5.0) # Set operation timeout
+                    
+                    sc.sticky["server_status"] = "Handling connection from {}".format(addr)
+                    sc.sticky["last_connection_addr"] = str(addr)
+                    
+                    # ... processing continues below ...
+                else:
+                    # Timeout occurred (no connection), loop back to check run_server flag
+                    continue
 
                 # --- Read Request (Robustly from GHCodeMCP.py) ---
                 headers_raw = b""
@@ -1488,6 +1503,8 @@ def socket_server_thread():
                     try: conn.shutdown(socket.SHUT_RDWR)
                     except: pass
                     conn.close()
+                if sc.sticky.get("run_server", False):
+                     sc.sticky["server_status"] = "Server listening on {}:{}".format(HOST, PORT)
 
         # End of while loop
         sc.sticky["server_status"] = "Server stopped."
@@ -1529,18 +1546,41 @@ server_thread_obj = sc.sticky.get("server_thread_obj")
 # Check if thread object exists and is alive (more reliable check)
 server_thread_is_alive = server_thread_obj and isinstance(server_thread_obj, threading.Thread) and server_thread_obj.isAlive()
 
-# --- Start/Stop Server Logic ---
-if run_server_toggle and not server_was_intended_to_run:
-    # --- START SERVER ---
-    if server_thread_is_alive:
-         # A thread seems running, but intention was off. Log warning, update intention.
-         ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Server thread may already be active. Check status.")
-         sc.sticky["server_is_intended_to_run"] = True # Align intention
-    else:
-        # Intention is now ON, no thread alive, so START.
-        ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "RunServer toggled ON. Starting server...")
+# --- Start/Stop/Restart Server Logic ---
+if run_server_toggle:
+    # User wants server ON
+    should_start = False
+    
+    if not server_was_intended_to_run:
+        # Just toggled ON
+        should_start = True
+    elif not server_thread_is_alive:
+        # Intended ON, but thread is dead
+        should_start = True
+        
+    if should_start:
+        # === RESTART SEQUENCE ===
+        ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Initializing server sequence...")
+        
+        # 1. Stop existing thread if alive
+        if server_thread_obj and isinstance(server_thread_obj, threading.Thread) and server_thread_obj.isAlive():
+            ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Stopping orphaned/previous server thread...")
+            sc.sticky["run_server"] = False # Signal stop
+            
+            # Wait for graceful shutdown (max 2 seconds)
+            for i in range(20):
+                if not server_thread_obj.isAlive():
+                    break
+                time.sleep(0.1)
+                
+            if server_thread_obj.isAlive():
+                ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Previous thread did not stop gracefully. Forcing new start (potential port conflict).")
+            else:
+                ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Previous thread stopped successfully.")
+
+        # 2. Start NEW Server
         try:
-            # Clear previous errors/status before starting
+            # Clear previous errors/status
             sc.sticky.pop("server_thread_error", None)
             sc.sticky.pop("processing_error", None)
             sc.sticky.pop("last_update_error", None)
@@ -1556,6 +1596,7 @@ if run_server_toggle and not server_was_intended_to_run:
             sc.sticky["server_is_intended_to_run"] = True # Mark desired state
 
             time.sleep(0.1) # Brief pause for thread init
+            ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Server thread started.")
 
         except Exception as start_err:
              start_msg = "ERROR starting server thread: {}".format(start_err)
@@ -1563,15 +1604,14 @@ if run_server_toggle and not server_was_intended_to_run:
              sc.sticky["server_status"] = "Failed to start"
              sc.sticky["server_is_intended_to_run"] = False
              sc.sticky["server_thread_obj"] = None
-             sc.sticky["run_server"] = False # Ensure flag is off
+             sc.sticky["run_server"] = False
 
 elif not run_server_toggle and server_was_intended_to_run:
     # --- STOP SERVER ---
     ghenv.Component.AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "RunServer toggled OFF. Signaling server to stop...")
     sc.sticky["run_server"] = False # Signal thread's loop to exit
     sc.sticky["server_is_intended_to_run"] = False # Mark desired state as OFF
-    # Thread should stop itself. Don't join().
-    # Clear the thread object reference immediately. Status updated by thread on exit.
+    # Thread should stop itself. Don't join() here to avoid UI freeze.
     sc.sticky["server_thread_obj"] = None
 
 
@@ -1641,8 +1681,13 @@ if hasattr(sc, "sticky"):
                      if key == "server_thread_obj" and isinstance(value, threading.Thread):
                          thread_state = "Alive" if value.isAlive() else "Not Alive"
                          value_str = "<Thread ID: {}, State: {}>".format(value.ident, thread_state)
-                     elif key == "connection_log" and isinstance(value, str) and len(value) > 250:
-                          value_str = repr(value[:250]) + "...(log truncated)"
+                     elif isinstance(value, (str, unicode)):
+                          # Handle strings directly to avoid unicode escape sequences in repr()
+                          val_str = value
+                          if len(val_str) > 500: # Increased limit for better visibility
+                               value_str = val_str[:500] + "...(truncated)"
+                          else:
+                               value_str = val_str
                      else:
                          # General repr, truncate if too long
                          repr_val = repr(value)
