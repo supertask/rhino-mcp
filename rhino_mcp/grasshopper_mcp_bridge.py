@@ -9,6 +9,9 @@ import json
 import traceback
 import time
 import System
+import os
+import platform
+import subprocess
 from System import Guid, Action
 from System.Drawing import RectangleF
 
@@ -30,7 +33,43 @@ from Grasshopper.Kernel.Parameters import (
 # --- Constants ---
 HOST = "127.0.0.1"
 PORT = 9999
-SERVER_NAME = "Rhino-GH MCP Server"
+SERVER_NAME = "Rhino-Grasshopperアプリ内部 MCPブリッジ・サーバー"
+LANGUAGE = 'ja'  # 'en' for English, 'ja' for Japanese
+
+MESSAGES = {
+    'en': {
+        'zombie_killed_socket': "Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
+        'zombie_killed_os': "Success: Force killed zombie Rhino.exe (PID: {1}) on port {0}. Restarting server...",
+        'server_is_active_ui': "Port {0} is held by an active Rhino instance (UI is visible). Grasshopper MCP Server start aborted.",
+        'port_in_use_check': "Port {0} is in use. Checking for zombie process...",
+        'server_already_running': "Server is already running",
+        'port_in_use': "Error: Port {0} is already in use!",
+        'check_other_instance': "Please check if another Rhino instance is running.",
+        'server_started': "Rhino-Grasshopper Internal MCP Bridge started on {0}:{1}",
+        'start_failed': "Failed to start server: {0}",
+        'server_stopped': "Rhino-Grasshopper Internal MCP Bridge Stopped"
+    },
+    'ja': {
+        'zombie_killed_socket': u"ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
+        'zombie_killed_os': u"正常：ポート{0}を使用中のゾンビアプリのRhino.exe（PID: {1}）を強制終了してサーバを再起動します...",
+        'server_is_active_ui': u"ポート{0}は現在使用中のRhino（UIあり）によって使用されています。Rhino-Grasshopperアプリ内部 MCPブリッジの起動を中止します。",
+        'port_in_use_check': u"ポート{0}は使用中です。ゾンビプロセスの確認中...",
+        'server_already_running': u"サーバーは既に起動しています",
+        'port_in_use': u"エラー: ポート {0} は既に使用されています！",
+        'check_other_instance': u"他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
+        'server_started': u"Rhino-Grasshopperアプリ内部 MCPブリッジを起動しました: {0}:{1}",
+        'start_failed': u"サーバーの起動に失敗しました: {0}",
+        'server_stopped': u"Rhino-Grasshopperアプリ内部 MCPブリッジを停止しました"
+    }
+}
+
+def get_message(key, *args):
+    """Get localized message"""
+    lang = MESSAGES.get(LANGUAGE, MESSAGES['en'])
+    msg = lang.get(key, MESSAGES['en'].get(key, key))
+    if args:
+        return msg.format(*args)
+    return msg
 
 # --- Helper: Get Active Document ---
 def get_active_gh_doc():
@@ -610,18 +649,179 @@ def process_command(cmd):
             return {"status": "success", "result": str(loc.get("result", "Executed"))}
         except Exception as e:
             return {"status": "error", "result": str(e)}
+
+    elif ctype == "get_server_status":
+        is_headless = False
+        try:
+            is_headless = Rhino.RhinoApp.IsRunningHeadless
+        except:
+            pass
+        return {
+            "status": "success", 
+            "headless": is_headless,
+            "pid": os.getpid()
+        }
+
+    elif ctype == "stop_server":
+        # Schedule stop
+        def stop_action():
+            sc.sticky["gh_mcp_run_server"] = False
+        Rhino.RhinoApp.InvokeOnUiThread(Action(stop_action))
+        return {"status": "success", "message": "Server stopping..."}
             
     return {"status": "error", "result": "Unknown command"}
 
 # --- Server Loop ---
+def _try_kill_zombie_server():
+    """
+    Returns: 0=Error/NoConnect, 1=Killed(Headless), 2=Alive(UI)
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2.0)
+        s.connect((HOST, PORT))
+        
+        body = json.dumps({"type": "get_server_status"})
+        req = "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}".format(len(body), body)
+        s.sendall(req.encode())
+        
+        # Read response
+        data = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk: break
+            data += chunk
+            if b"\r\n\r\n" in data:
+                head, body_part = data.split(b"\r\n\r\n", 1)
+                cl = 0
+                for line in head.decode().split("\r\n"):
+                    if "content-length:" in line.lower():
+                        cl = int(line.lower().split(":")[1].strip())
+                while len(body_part) < cl:
+                    body_part += s.recv(4096)
+                data = body_part
+                break
+        
+        try:
+            res = json.loads(data.decode())
+        except:
+            return 0
+
+        if res.get("headless"):
+            # Rhino.RhinoApp.WriteLine("[MCP] Found headless zombie. Killing...")
+            s.close()
+            
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((HOST, PORT))
+            body = json.dumps({"type": "stop_server"})
+            req = "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}".format(len(body), body)
+            s.sendall(req.encode())
+            s.close()
+            return 1
+        else:
+            Rhino.RhinoApp.WriteLine(get_message('server_is_active_ui', PORT))
+            s.close()
+            return 2
+
+    except Exception as e:
+        # Rhino.RhinoApp.WriteLine("[MCP] Zombie check failed: {}".format(e))
+        return 0
+
+def _force_kill_port_holder():
+    """
+    Returns: (bool killed, str pid)
+    """
+    try:
+        if platform.system() != "Windows":
+            return False, None
+
+        cmd = 'netstat -ano | findstr :{}'.format(PORT)
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, _ = proc.communicate()
+        
+        if not stdout:
+            return False, None
+
+        lines = stdout.strip().split('\n')
+        target_pid = None
+        for line in lines:
+            parts = line.split()
+            if len(parts) > 1 and str(PORT) in parts[1]:
+                target_pid = parts[-1]
+                break
+        
+        if not target_pid:
+            return False, None
+
+        cmd = 'tasklist /FI "PID eq {}" /FO CSV /NH'.format(target_pid)
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, _ = proc.communicate()
+        
+        if not stdout:
+            return False, None
+
+        process_info = stdout.strip()
+        is_rhino = "rhino" in process_info.lower()
+        
+        if is_rhino:
+            subprocess.call('taskkill /F /PID {}'.format(target_pid), shell=True)
+            return True, target_pid
+        else:
+            Rhino.RhinoApp.WriteLine("Port {} is held by non-Rhino process (PID: {}). Skipping kill.".format(PORT, target_pid))
+            return False, target_pid
+
+    except Exception as e:
+        Rhino.RhinoApp.WriteLine("Error in force kill: {}".format(e))
+        return False, None
+
 def server_loop():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if platform.system() != "Windows":
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        server.bind((HOST, PORT))
+        try:
+            server.bind((HOST, PORT))
+        except socket.error:
+            # Rhino.RhinoApp.WriteLine(get_message('port_in_use_check', PORT))
+            
+            killed = False
+            zombie_status = _try_kill_zombie_server()
+            
+            if zombie_status == 1:
+                killed = True
+                Rhino.RhinoApp.WriteLine(get_message('zombie_killed_socket', PORT))
+            elif zombie_status == 2:
+                # Alive UI - abort
+                pass
+            else:
+                # Force kill
+                killed_os, pid = _force_kill_port_holder()
+                if killed_os:
+                    killed = True
+                    Rhino.RhinoApp.WriteLine(get_message('zombie_killed_os', PORT, pid))
+
+            if killed:
+                time.sleep(1.0)
+                try:
+                    server.bind((HOST, PORT))
+                except:
+                    Rhino.RhinoApp.WriteLine("[MCP] Failed to bind after kill.")
+                    sc.sticky["gh_mcp_run_server"] = False
+                    return
+            else:
+                if zombie_status != 1 and zombie_status != 2:
+                    Rhino.RhinoApp.WriteLine(get_message('port_in_use', PORT))
+                
+                if zombie_status == 2:
+                    pass
+                else:
+                    Rhino.RhinoApp.WriteLine(get_message('check_other_instance'))
+                sc.sticky["gh_mcp_run_server"] = False
+                return
+
         server.listen(5)
         server.setblocking(0)
-        Rhino.RhinoApp.WriteLine("[MCP] Server listening on {}:{}".format(HOST, PORT))
+        Rhino.RhinoApp.WriteLine(get_message('server_started', HOST, PORT))
         
         while sc.sticky["gh_mcp_run_server"]:
             try:
@@ -672,7 +872,9 @@ def server_loop():
         Rhino.RhinoApp.WriteLine("[MCP] Server Fatal Error: {}".format(e))
     finally:
         server.close()
-        Rhino.RhinoApp.WriteLine("[MCP] Server Stopped")
+        # 実際に稼働していた（sc.stickyがTrueだった）場合のみ停止メッセージを出す
+        if sc.sticky["gh_mcp_run_server"]:
+            Rhino.RhinoApp.WriteLine(get_message('server_stopped'))
         sc.sticky["gh_mcp_run_server"] = False
 
 # --- Main Entry Point (Toggle) ---
@@ -688,4 +890,4 @@ if __name__ == "__main__":
         t.daemon = True
         t.start()
         sc.sticky["gh_mcp_server_thread"] = t
-        Rhino.RhinoApp.WriteLine("[MCP] Starting Server Thread...")
+        # Rhino.RhinoApp.WriteLine("[MCP] Starting Server Thread...")

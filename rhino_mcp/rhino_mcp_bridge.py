@@ -17,6 +17,7 @@ import platform
 import traceback
 import sys
 import base64
+import subprocess
 from System.Drawing import Bitmap
 from System.Drawing.Imaging import ImageFormat
 from System.IO import MemoryStream
@@ -32,12 +33,16 @@ ANNOTATION_LAYER = "MCP_Annotations"
 
 MESSAGES = {
     'en': {
+        'zombie_killed_socket': "Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
+        'zombie_killed_os': "Success: Force killed zombie Rhino.exe (PID: {1}) on port {0}. Restarting server...",
+        'server_is_active_ui': "Port {0} is held by an active Rhino instance (UI is visible).  Rhino MCP Server start aborted.",
+        'port_in_use_check': "Port {0} is in use. Checking for zombie process...",
         'server_already_running': "Server is already running",
         'port_in_use': "Error: Port {0} is already in use!",
         'check_other_instance': "Please check if another Rhino instance is running.",
-        'server_started': "RhinoMCP server started on {0}:{1}",
+        'server_started': "Rhino Internal MCP Bridge started on {0}:{1}",
         'start_failed': "Failed to start server: {0}",
-        'server_stopped': "RhinoMCP server stopped",
+        'server_stopped': "Rhino Internal MCP Bridge stopped",
         'client_connected': "Client connected from {0}:{1}",
         'client_disconnected': "Client disconnected",
         'response_sent': "Response sent successfully",
@@ -47,12 +52,16 @@ MESSAGES = {
         'stop_instruction': "To stop the server, run: stop_server()"
     },
     'ja': {
+        'zombie_killed_socket': u"ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
+        'zombie_killed_os': u"正常：ポート{0}を使用中のゾンビアプリのRhino.exe（PID: {1}）を強制終了してサーバを再起動します...",
+        'server_is_active_ui': u"ポート{0}は現在使用中のRhino（UIあり）によって使用されています。Rhinoアプリ内部 MCPブリッジの起動を中止します。",
+        'port_in_use_check': u"ポート{0}は使用中です。ゾンビプロセスの確認中...",
         'server_already_running': u"サーバーは既に起動しています",
         'port_in_use': u"エラー: ポート {0} は既に使用されています！",
         'check_other_instance': u"他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
-        'server_started': u"RhinoMCPサーバーを起動しました: {0}:{1}",
+        'server_started': u"Rhinoアプリ内部 MCPブリッジを起動しました: {0}:{1}",
         'start_failed': u"サーバーの起動に失敗しました: {0}",
-        'server_stopped': u"RhinoMCPサーバーを停止しました",
+        'server_stopped': u"Rhinoアプリ内部 MCPブリッジを停止しました",
         'client_connected': u"クライアントが接続しました: {0}:{1}",
         'client_disconnected': u"クライアントが切断しました",
         'response_sent': u"レスポンスを送信しました",
@@ -137,7 +146,7 @@ class RhinoMCPServer:
     
     def start(self):
         if self.running:
-            log_message(get_message('server_already_running'))
+            # log_message(get_message('server_already_running'))
             return
             
         self.running = True
@@ -154,8 +163,46 @@ class RhinoMCPServer:
             try:
                 self.socket.bind((self.host, self.port))
             except socket.error as e:
-                log_message(get_message('port_in_use', self.port))
-                log_message(get_message('check_other_instance'))
+                # ポートが使用中の場合、ゾンビ（デーモン）サーバーか確認してキルを試みる
+                # log_message(get_message('port_in_use', self.port))
+                
+                killed = False
+                
+                # Zombie check
+                # Returns: 0=Error/NoConnect, 1=Killed(Headless), 2=Alive(UI)
+                zombie_status = self._try_kill_zombie_server()
+                
+                if zombie_status == 1:
+                    killed = True
+                    log_message(get_message('zombie_killed_socket', self.port))
+                elif zombie_status == 2:
+                    # Alive UI - Do not touch
+                    pass
+                else:
+                    # Connection failed -> Force kill check
+                    killed_os, pid = self._force_kill_port_holder()
+                    if killed_os:
+                        killed = True
+                        log_message(get_message('zombie_killed_os', self.port, pid))
+
+                if killed:
+                    time.sleep(1.0) # ポート解放待ち
+                    try:
+                        self.socket.bind((self.host, self.port))
+                    except socket.error:
+                        log_message("Failed to bind even after killing zombie.")
+                        self.running = False
+                        self.socket = None
+                        return
+                else:
+                    if zombie_status != 1 and zombie_status != 2: # Only show if we didn't identify it
+                         log_message(get_message('port_in_use', self.port))
+                    
+                if zombie_status == 2:
+                    pass
+                else:
+                    log_message(get_message('check_other_instance'))
+                
                 # エラーを再送出してサーバー起動を中断させます
                 self.running = False
                 self.socket = None
@@ -173,7 +220,108 @@ class RhinoMCPServer:
             log_message(get_message('start_failed', str(e)))
             self.stop()
             
+    def _force_kill_port_holder(self):
+        """
+        ポートを使用しているプロセスを特定し、RhinoであればOSレベルで強制終了する
+        Returns: (bool killed, str pid)
+        """
+        try:
+            # Windows only for now
+            if platform.system() != "Windows":
+                return False, None
+
+            # 1. netstatでPIDを特定
+            # cmd: netstat -ano | findstr :9876
+            cmd = 'netstat -ano | findstr :{}'.format(self.port)
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, _ = proc.communicate()
+            
+            if not stdout:
+                return False, None # ポート使用者は見つからなかった
+
+            # 行を解析してPIDを取得 (TCP 127.0.0.1:9876 ... LISTENING 1234)
+            lines = stdout.strip().split('\n')
+            target_pid = None
+            for line in lines:
+                parts = line.split()
+                # アドレス部分が :PORT で終わるかチェック
+                if len(parts) > 1 and str(self.port) in parts[1]:
+                    target_pid = parts[-1] # 最後の要素がPID
+                    break
+            
+            if not target_pid:
+                return False, None
+
+            # 2. tasklistでプロセス名を確認
+            # cmd: tasklist /FI "PID eq 1234" /FO CSV /NH
+            cmd = 'tasklist /FI "PID eq {}" /FO CSV /NH'.format(target_pid)
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, _ = proc.communicate()
+            
+            if not stdout:
+                return False, None
+
+            # 出力例: "Rhino.exe","1234","Console","1","150,000 K"
+            process_info = stdout.strip()
+            # プロセス名が Rhino 関連かチェック
+            is_rhino = "rhino" in process_info.lower()
+            
+            if is_rhino:
+                # log_message("Found Rhino process (PID: {}) holding port {}. Force killing...".format(target_pid, self.port))
+                # 3. taskkillで強制終了
+                subprocess.call('taskkill /F /PID {}'.format(target_pid), shell=True)
+                return True, target_pid
+            else:
+                log_message("Port {} is held by non-Rhino process (PID: {}). Skipping kill.".format(self.port, target_pid))
+                return False, target_pid
+
+        except Exception as e:
+            log_message("Error in force kill: {}".format(e))
+            return False, None
+
+    def _try_kill_zombie_server(self):
+        """
+        既知のポートに接続し、サーバーがHeadless（デーモン）であれば停止させる
+        Returns: 0=Error/NoConnect, 1=Killed(Headless), 2=Alive(UI)
+        """
+        try:
+            temp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            temp_socket.settimeout(2.0)
+            temp_socket.connect((self.host, self.port))
+            
+            # ステータス確認コマンド送信
+            cmd = json.dumps({"type": "get_server_status"})
+            temp_socket.sendall(cmd.encode('utf-8'))
+            
+            # 応答待機
+            data = temp_socket.recv(4096)
+            if not data:
+                return 0
+                
+            response = json.loads(data.decode('utf-8'))
+            is_headless = response.get("headless", False)
+            
+            if is_headless:
+                # log_message("Found headless server. Sending stop command...")
+                # 停止コマンド送信
+                stop_cmd = json.dumps({"type": "stop_server"})
+                temp_socket.sendall(stop_cmd.encode('utf-8'))
+                temp_socket.close()
+                return 1
+            else:
+                log_message(get_message('server_is_active_ui', self.port))
+                temp_socket.close()
+                return 2
+                
+        except Exception as e:
+            # log_message("Could not contact existing server: {0}".format(str(e)))
+            return 0
+            
     def stop(self):
+        # 既に停止していれば何もしない
+        if not self.running:
+            return
+
         self.running = False
         
         # Close socket
@@ -296,7 +444,30 @@ class RhinoMCPServer:
             command_type = command.get("type")
             params = command.get("params", {})
             
-            if command_type == "get_scene_info":
+            if command_type == "get_server_status":
+                is_headless = False
+                try:
+                    # Rhino 7以降のプロパティ。古いバージョンではAttributeErrorになるため保護
+                    is_headless = Rhino.RhinoApp.IsRunningHeadless
+                except:
+                    pass
+                return {
+                    "status": "success",
+                    "headless": is_headless,
+                    "pid": os.getpid()
+                }
+                
+            elif command_type == "stop_server":
+                log_message("Received stop_server command.")
+                # 自身の停止処理を別スレッド（またはアイドル後）に予約
+                def stop_action():
+                    self.stop()
+                    # 必要であればここでRhino自体を終了する処理も書けるが、
+                    # あくまでサーバー停止にとどめるのが無難
+                Rhino.RhinoApp.InvokeOnUiThread(System.Action(stop_action))
+                return {"status": "success", "message": "Server stopping..."}
+            
+            elif command_type == "get_scene_info":
                 return self._get_scene_info(params)
             elif command_type == "create_cube":
                 return self._create_cube(params)
@@ -740,7 +911,7 @@ class RhinoMCPServer:
 
 # Create and start server
 server = RhinoMCPServer(HOST, PORT)
-server.start()
+# server.start() # Removed duplicate call
 
 # Add commands to Rhino
 def start_server():
@@ -753,5 +924,5 @@ def stop_server():
 
 # Automatically start the server when this script is loaded
 start_server()
-log_message(get_message('script_loaded'))
-log_message(get_message('stop_instruction')) 
+# log_message(get_message('script_loaded'))
+# log_message(get_message('stop_instruction')) 
