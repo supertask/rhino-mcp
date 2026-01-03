@@ -19,6 +19,209 @@ urllib3.disable_warnings(InsecureRequestWarning)
 # Configure logging
 logger = logging.getLogger("GrasshopperTools")
 
+# Patterns Knowledge Base (Ported from C# ComponentKnowledgeBase.json)
+GH_PATTERNS = {
+  "components": [
+    {
+      "name": "Point",
+      "category": "Params",
+      "subcategory": "Geometry",
+      "description": "Creates a point at the specified coordinates",
+      "inputs": [
+        {"name": "X", "type": "Number", "description": "X coordinate"},
+        {"name": "Y", "type": "Number", "description": "Y coordinate"},
+        {"name": "Z", "type": "Number", "description": "Z coordinate"}
+      ],
+      "outputs": [
+        {"name": "Pt", "type": "Point", "description": "Point"}
+      ]
+    },
+    {
+      "name": "XY Plane",
+      "category": "Vector",
+      "subcategory": "Plane",
+      "description": "Creates an XY plane at the world origin or at a specified point",
+      "inputs": [
+        {"name": "Origin", "type": "Point", "description": "Origin point", "optional": True}
+      ],
+      "outputs": [
+        {"name": "Plane", "type": "Plane", "description": "XY plane"}
+      ]
+    },
+    {
+      "name": "Box",
+      "category": "Surface",
+      "subcategory": "Primitive",
+      "description": "Creates a box from a base plane and dimensions",
+      "inputs": [
+        {"name": "Base", "type": "Plane", "description": "Base plane"},
+        {"name": "X Size", "type": "Number", "description": "Size in X direction"},
+        {"name": "Y Size", "type": "Number", "description": "Size in Y direction"},
+        {"name": "Z Size", "type": "Number", "description": "Size in Z direction"}
+      ],
+      "outputs": [
+        {"name": "Box", "type": "Brep", "description": "Box geometry"}
+      ]
+    },
+    {
+      "name": "Circle",
+      "category": "Curve",
+      "subcategory": "Primitive",
+      "description": "Creates a circle from a plane and radius",
+      "inputs": [
+        {"name": "Plane", "type": "Plane", "description": "Circle plane"},
+        {"name": "Radius", "type": "Number", "description": "Circle radius"}
+      ],
+      "outputs": [
+        {"name": "Circle", "type": "Curve", "description": "Circle curve"}
+      ]
+    },
+    {
+      "name": "Number Slider",
+      "category": "Params",
+      "subcategory": "Input",
+      "description": "Slider for numeric input",
+      "inputs": [],
+      "outputs": [
+        {"name": "Number", "type": "Number", "description": "Slider value"}
+      ],
+      "defaultSettings": {
+        "min": 0,
+        "max": 10,
+        "value": 5
+      }
+    },
+    {
+      "name": "Panel",
+      "category": "Params",
+      "subcategory": "Input",
+      "description": "Text panel for input or output",
+      "inputs": [
+        {"name": "Input", "type": "Any", "description": "Any input", "optional": True}
+      ],
+      "outputs": [
+        {"name": "Output", "type": "Text", "description": "Panel text"}
+      ]
+    },
+    {
+      "name": "Voronoi",
+      "category": "Surface",
+      "subcategory": "Triangulation",
+      "description": "Creates a Voronoi diagram from points",
+      "inputs": [
+        {"name": "Points", "type": "Point", "description": "Input points"},
+        {"name": "Radius", "type": "Number", "description": "Cell radius", "optional": True},
+        {"name": "Plane", "type": "Plane", "description": "Base plane", "optional": True}
+      ],
+      "outputs": [
+        {"name": "Cells", "type": "Curve", "description": "Voronoi cells"},
+        {"name": "Vertices", "type": "Point", "description": "Voronoi vertices"}
+      ]
+    },
+    {
+      "name": "Populate 3D",
+      "category": "Vector",
+      "subcategory": "Grid",
+      "description": "Creates a 3D grid of points",
+      "inputs": [
+        {"name": "Base", "type": "Plane", "description": "Base plane"},
+        {"name": "Size X", "type": "Number", "description": "Size in X direction"},
+        {"name": "Size Y", "type": "Number", "description": "Size in Y direction"},
+        {"name": "Size Z", "type": "Number", "description": "Size in Z direction"},
+        {"name": "Count X", "type": "Integer", "description": "Count in X direction"},
+        {"name": "Count Y", "type": "Integer", "description": "Count in Y direction"},
+        {"name": "Count Z", "type": "Integer", "description": "Count in Z direction"}
+      ],
+      "outputs": [
+        {"name": "Points", "type": "Point", "description": "3D grid of points"}
+      ]
+    },
+    {
+      "name": "Boundary Surfaces",
+      "category": "Surface",
+      "subcategory": "Freeform",
+      "description": "Creates boundary surfaces from curves",
+      "inputs": [
+        {"name": "Curves", "type": "Curve", "description": "Input curves"}
+      ],
+      "outputs": [
+        {"name": "Surfaces", "type": "Surface", "description": "Boundary surfaces"}
+      ]
+    },
+    {
+      "name": "Extrude",
+      "category": "Surface",
+      "subcategory": "Freeform",
+      "description": "Extrudes curves or surfaces",
+      "inputs": [
+        {"name": "Base", "type": "Geometry", "description": "Base geometry"},
+        {"name": "Direction", "type": "Vector", "description": "Extrusion direction"},
+        {"name": "Distance", "type": "Number", "description": "Extrusion distance"}
+      ],
+      "outputs": [
+        {"name": "Result", "type": "Brep", "description": "Extruded geometry"}
+      ]
+    }
+  ],
+  "patterns": [
+    {
+      "name": "3D Box",
+      "description": "Creates a simple 3D box",
+      "components": [
+        {"type": "XY Plane", "x": 100, "y": 100, "id": "plane"},
+        {"type": "Number Slider", "x": 100, "y": 200, "id": "sliderX", "settings": {"min": 0, "max": 50, "value": 20}},
+        {"type": "Number Slider", "x": 100, "y": 250, "id": "sliderY", "settings": {"min": 0, "max": 50, "value": 20}},
+        {"type": "Number Slider", "x": 100, "y": 300, "id": "sliderZ", "settings": {"min": 0, "max": 50, "value": 20}},
+        {"type": "Box", "x": 400, "y": 200, "id": "box"}
+      ],
+      "connections": [
+        {"source": "plane", "sourceParam": "Plane", "target": "box", "targetParam": "Base"},
+        {"source": "sliderX", "sourceParam": "Number", "target": "box", "targetParam": "X Size"},
+        {"source": "sliderY", "sourceParam": "Number", "target": "box", "targetParam": "Y Size"},
+        {"source": "sliderZ", "sourceParam": "Number", "target": "box", "targetParam": "Z Size"}
+      ]
+    },
+    {
+      "name": "3D Voronoi",
+      "description": "Creates a 3D Voronoi pattern within a box",
+      "components": [
+        {"type": "XY Plane", "x": 100, "y": 100, "id": "plane"},
+        {"type": "Number Slider", "x": 100, "y": 200, "id": "sizeX", "settings": {"min": 0, "max": 100, "value": 50}},
+        {"type": "Number Slider", "x": 100, "y": 250, "id": "sizeY", "settings": {"min": 0, "max": 100, "value": 50}},
+        {"type": "Number Slider", "x": 100, "y": 300, "id": "sizeZ", "settings": {"min": 0, "max": 100, "value": 50}},
+        {"type": "Number Slider", "x": 100, "y": 350, "id": "countX", "settings": {"min": 1, "max": 20, "value": 10}},
+        {"type": "Number Slider", "x": 100, "y": 400, "id": "countY", "settings": {"min": 1, "max": 20, "value": 10}},
+        {"type": "Number Slider", "x": 100, "y": 450, "id": "countZ", "settings": {"min": 1, "max": 20, "value": 10}},
+        {"type": "Populate 3D", "x": 400, "y": 250, "id": "populate"},
+        {"type": "Voronoi", "x": 600, "y": 250, "id": "voronoi"}
+      ],
+      "connections": [
+        {"source": "plane", "sourceParam": "Plane", "target": "populate", "targetParam": "Base"},
+        {"source": "sizeX", "sourceParam": "Number", "target": "populate", "targetParam": "Size X"},
+        {"source": "sizeY", "sourceParam": "Number", "target": "populate", "targetParam": "Size Y"},
+        {"source": "sizeZ", "sourceParam": "Number", "target": "populate", "targetParam": "Size Z"},
+        {"source": "countX", "sourceParam": "Number", "target": "populate", "targetParam": "Count X"},
+        {"source": "countY", "sourceParam": "Number", "target": "populate", "targetParam": "Count Y"},
+        {"source": "countZ", "sourceParam": "Number", "target": "populate", "targetParam": "Count Z"},
+        {"source": "populate", "sourceParam": "Points", "target": "voronoi", "targetParam": "Points"}
+      ]
+    },
+    {
+      "name": "Circle",
+      "description": "Creates a simple circle",
+      "components": [
+        {"type": "XY Plane", "x": 100, "y": 100, "id": "plane"},
+        {"type": "Number Slider", "x": 100, "y": 200, "id": "radius", "settings": {"min": 0, "max": 50, "value": 10}},
+        {"type": "Circle", "x": 400, "y": 150, "id": "circle"}
+      ],
+      "connections": [
+        {"source": "plane", "sourceParam": "Plane", "target": "circle", "targetParam": "Plane"},
+        {"source": "radius", "sourceParam": "Number", "target": "circle", "targetParam": "Radius"}
+      ]
+    }
+  ]
+}
+
 # Add a preprocessing function for LLM inputs
 def preprocess_llm_input(input_str: str) -> str:
     """
@@ -289,6 +492,18 @@ class GrasshopperTools:
         self.app.tool()(self.update_script)
         self.app.tool()(self.update_script_with_code_reference)
         self.app.tool()(self.expire_and_get_info)
+        self.app.tool()(self.create_component)
+        self.app.tool()(self.search_components)
+        self.app.tool()(self.connect_components)
+        self.app.tool()(self.disconnect_components)
+        self.app.tool()(self.set_component_value)
+        self.app.tool()(self.set_component_state)
+        self.app.tool()(self.create_group)
+        self.app.tool()(self.delete_objects)
+        self.app.tool()(self.clear_canvas)
+        self.app.tool()(self.get_canvas_stats)
+        self.app.tool()(self.bake_objects)
+        self.app.tool()(self.get_available_patterns)
     
     def is_server_available(self, ctx: Context) -> bool:
         """Grasshopper: Check if the Grasshopper server is available.
@@ -744,3 +959,285 @@ class GrasshopperTools:
 
         except Exception as e:
             return f"Error expiring component: {str(e)}"
+
+    def create_component(self, ctx: Context, name: str, x: float = 0, y: float = 0) -> str:
+        """Grasshopper: Create a new component by name on the canvas.
+        
+        The name matching attempts to find exact matches first, then nickname matches, then partial matches.
+        
+        Args:
+            name: Name of the component (e.g., "Sphere", "Move", "Voronoi", "Panel", "Slider")
+            x: X coordinate on canvas (default 0)
+            y: Y coordinate on canvas (default 0)
+            
+        Returns:
+            JSON string with details of the created component (including instanceGuid)
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("create_component", {
+                "name": name,
+                "x": x,
+                "y": y
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return json.dumps(result.get("result", {}), indent=2)
+        except Exception as e:
+            return f"Error creating component: {str(e)}"
+
+    def search_components(self, ctx: Context, query: str, limit: int = 10) -> str:
+        """Grasshopper: Search for available components by name or keyword.
+        
+        Useful when you don't know the exact name of a component.
+        
+        Args:
+            query: Search keyword
+            limit: Max results (default 10)
+            
+        Returns:
+            JSON list of matching components with names and categories
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("search_components", {
+                "query": query,
+                "limit": limit
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return json.dumps(result.get("result", []), indent=2)
+        except Exception as e:
+            return f"Error searching components: {str(e)}"
+
+    def connect_components(self, ctx: Context, source_id: str, source_param: str, target_id: str, target_param: str) -> str:
+        """Grasshopper: Connect two components.
+        
+        Connects an output parameter of the source component to an input parameter of the target component.
+        
+        Args:
+            source_id: Instance GUID of the source component
+            source_param: Name (or NickName) of the output parameter on source (e.g. "Result", "C", "Output"). Can also be an index string "0".
+            target_id: Instance GUID of the target component
+            target_param: Name (or NickName) of the input parameter on target (e.g. "Radius", "A", "Input"). Can also be an index string "0".
+            
+        Returns:
+            Result message indicating success or failure
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("connect_components", {
+                "source_id": source_id,
+                "source_param": source_param,
+                "target_id": target_id,
+                "target_param": target_param
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            
+            # Check for runtime messages (added feature)
+            msg = result.get("result", "Connected")
+            runtime_msgs = result.get("target_runtime_messages", [])
+            if runtime_msgs:
+                msg += f". Warning/Errors: {', '.join(runtime_msgs)}"
+            
+            return msg
+        except Exception as e:
+            return f"Error connecting components: {str(e)}"
+
+    def disconnect_components(self, ctx: Context, target_id: str, target_param: str, source_id: str = None) -> str:
+        """Grasshopper: Disconnect wires from a component's input.
+        
+        Args:
+            target_id: Instance GUID of the component to disconnect from
+            target_param: Name or index of the input parameter to disconnect
+            source_id: Optional. If provided, only disconnects the wire from this specific source. If omitted, disconnects ALL wires from the target param.
+            
+        Returns:
+            Result message
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("disconnect_components", {
+                "target_id": target_id,
+                "target_param": target_param,
+                "source_id": source_id
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return result.get("result", "Disconnected")
+        except Exception as e:
+            return f"Error disconnecting: {str(e)}"
+
+    def set_component_value(self, ctx: Context, instance_guid: str, value: Any) -> str:
+        """Grasshopper: Set a value for a specific component (Slider, Panel, Toggle).
+        
+        For Sliders, you can pass a single number or a dictionary/JSON string to set range:
+        {"value": 10, "min": 0, "max": 100, "decimals": 0}
+        
+        Args:
+            instance_guid: The GUID of the component
+            value: The value to set (string, number, or property dict)
+            
+        Returns:
+            Result message
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("set_component_value", {
+                "instance_guid": instance_guid,
+                "value": value
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return result.get("result", "Value set")
+        except Exception as e:
+            return f"Error setting value: {str(e)}"
+
+    def set_component_state(self, ctx: Context, instance_guid: str, preview: bool = None, enabled: bool = None, locked: bool = None, wire_display: str = None) -> str:
+        """Grasshopper: Set state (Preview, Enabled, Locked) for a component.
+        
+        Args:
+            instance_guid: The GUID of the component
+            preview: Set preview visibility (True/False)
+            enabled: Set enabled state (True/False)
+            locked: Set locked state (True/False). Locked components cannot be selected/modified in UI.
+            wire_display: Wire display style ("default", "faint", "hidden")
+            
+        Returns:
+            Result message
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("set_component_state", {
+                "instance_guid": instance_guid,
+                "preview": preview,
+                "enabled": enabled,
+                "locked": locked,
+                "wire_display": wire_display
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return result.get("result", "State updated")
+        except Exception as e:
+            return f"Error setting state: {str(e)}"
+
+    def create_group(self, ctx: Context, component_ids: List[str], group_name: str = "Group") -> str:
+        """Grasshopper: Group selected components.
+        
+        Args:
+            component_ids: List of component GUIDs to group
+            group_name: Name/Label for the group
+            
+        Returns:
+            GUID of the created group
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("create_group", {
+                "component_ids": component_ids,
+                "group_name": group_name
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return result.get("result", "Group created")
+        except Exception as e:
+            return f"Error creating group: {str(e)}"
+
+    def delete_objects(self, ctx: Context, object_ids: List[str]) -> str:
+        """Grasshopper: Delete specified objects from canvas.
+        
+        Args:
+            object_ids: List of GUIDs to delete
+            
+        Returns:
+            Result summary
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("delete_objects", {
+                "object_ids": object_ids
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return result.get("result", "Deleted")
+        except Exception as e:
+            return f"Error deleting objects: {str(e)}"
+
+    def clear_canvas(self, ctx: Context, confirm: bool = False) -> str:
+        """Grasshopper: Clear all objects from the current canvas.
+        
+        Use with caution! This removes all components from the active document.
+        
+        Args:
+            confirm: Must be set to True to execute
+            
+        Returns:
+            Result message
+        """
+        if not confirm:
+            return "Error: You must set confirm=True to clear the canvas."
+            
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("clear_canvas", {
+                "confirm": confirm
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return result.get("result", "Canvas cleared")
+        except Exception as e:
+            return f"Error clearing canvas: {str(e)}"
+
+    def get_canvas_stats(self, ctx: Context) -> str:
+        """Grasshopper: Get statistics about the current canvas (object count, etc).
+        
+        Useful for a quick overview before getting full context.
+        
+        Returns:
+            JSON string with canvas statistics
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("get_canvas_stats", {})
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return json.dumps(result.get("result", {}), indent=2)
+        except Exception as e:
+            return f"Error getting stats: {str(e)}"
+
+    def bake_objects(self, ctx: Context, object_ids: List[str]) -> str:
+        """Grasshopper: Bake geometry from specified components to Rhino.
+        
+        Args:
+            object_ids: List of component/parameter GUIDs to bake
+            
+        Returns:
+            Result summary
+        """
+        try:
+            connection = get_grasshopper_connection()
+            result = connection.send_command("bake_objects", {
+                "object_ids": object_ids
+            })
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            
+            # If the result is a dictionary (new format), convert to string description
+            res_val = result.get("result", "Bake completed")
+            if isinstance(res_val, dict):
+                return f"Bake completed. Count: {res_val.get('baked_count', 0)}, IDs: {res_val.get('ids', [])}"
+            return str(res_val)
+        except Exception as e:
+            return f"Error baking objects: {str(e)}"
+
+    def get_available_patterns(self, ctx: Context) -> str:
+        """Grasshopper: Get a list of available patterns (recipes) for creating common Grasshopper definitions.
+        
+        These patterns provide templates for creating complex component networks.
+        Each pattern includes a list of components and their connections.
+        
+        Returns:
+            JSON string containing available patterns
+        """
+        return json.dumps(GH_PATTERNS, indent=2)

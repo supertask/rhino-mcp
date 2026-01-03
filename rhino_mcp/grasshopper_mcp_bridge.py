@@ -13,6 +13,7 @@ import os
 import platform
 import subprocess
 from System import Guid, Action
+from System.Collections.Generic import List
 from System.Drawing import RectangleF
 
 # Explicitly add reference to Grasshopper assembly
@@ -213,7 +214,8 @@ def get_param_info(param, is_input=True, parent_instance_guid=None, is_selected=
         "isInput": is_input,
         "access": get_access_string(param.Access) if hasattr(param, 'Access') else None,
         "optional": param.Optional if hasattr(param, 'Optional') else None,
-        "dataType": str(param.TypeName) if hasattr(param, 'TypeName') else None
+        "dataType": str(param.TypeName) if hasattr(param, 'TypeName') else None,
+        "dataCount": param.VolatileDataCount if hasattr(param, 'VolatileDataCount') else 0
     }
 
     if not parent_guid_str:
@@ -612,9 +614,412 @@ def update_script_with_code_reference(instance_guid, **kwargs):
     Rhino.RhinoApp.InvokeOnUiThread(Action(ui_action))
     return result_holder.get("res", {"status": "error", "result": "UI Action failed"})
 
+# --- Extended Tool Helper Functions ---
+
+def find_component_proxy(name):
+    """Find a component proxy by name or nickname."""
+    proxies = Grasshopper.Instances.ComponentServer.ObjectProxies
+    # 1. Exact Name match
+    for proxy in proxies:
+        if proxy.Desc.Name == name: return proxy
+    # 2. Case-insensitive Name match
+    for proxy in proxies:
+        if proxy.Desc.Name.lower() == name.lower(): return proxy
+    # 3. Exact NickName match
+    for proxy in proxies:
+        if proxy.Desc.NickName == name: return proxy
+    # 4. Case-insensitive NickName match
+    for proxy in proxies:
+        if proxy.Desc.NickName.lower() == name.lower(): return proxy
+    # 5. Partial match (if unique?) - maybe too risky
+    return None
+
+def _create_component_ui(name, x, y):
+    doc = get_active_gh_doc()
+    if not doc: return {"status": "error", "result": "No active document"}
+    
+    proxy = find_component_proxy(name)
+    if not proxy:
+        return {"status": "error", "result": "Component '{}' not found".format(name)}
+    
+    obj = proxy.CreateInstance()
+    if not obj:
+        return {"status": "error", "result": "Failed to create instance of '{}'".format(name)}
+    
+    # Ensure attributes exist (fixes NoneType error for objects like Sliders)
+    if obj.Attributes is None:
+        obj.CreateAttributes()
+        
+    obj.Attributes.Pivot = System.Drawing.PointF(float(x), float(y))
+    doc.AddObject(obj, False)
+    
+    # Auto-layout if it has params (optional, usually GH does this)
+    obj.Attributes.ExpireLayout()
+    
+    return {"status": "success", "result": get_component_info(obj) if isinstance(obj, Grasshopper.Kernel.IGH_Component) else get_param_info(obj, is_input=False)}
+
+def _connect_components_ui(source_id, source_param, target_id, target_param):
+    doc = get_active_gh_doc()
+    if not doc: return {"status": "error", "result": "No active document"}
+    
+    try:
+        source_obj = doc.FindObject(Guid.Parse(source_id), False)
+        target_obj = doc.FindObject(Guid.Parse(target_id), False)
+        
+        if not source_obj: return {"status": "error", "result": "Source object not found: " + str(source_id)}
+        if not target_obj: return {"status": "error", "result": "Target object not found: " + str(target_id)}
+        
+        # Resolve Source Param (Output)
+        src_p = None
+        if isinstance(source_obj, Grasshopper.Kernel.IGH_Param):
+            src_p = source_obj
+        elif isinstance(source_obj, Grasshopper.Kernel.IGH_Component):
+            # Try by name/nickname
+            if source_param:
+                for p in source_obj.Params.Output:
+                    if p.Name == source_param or p.NickName == source_param:
+                        src_p = p
+                        break
+            # Try by index
+            if not src_p and str(source_param).isdigit():
+                idx = int(source_param)
+                if idx < source_obj.Params.Output.Count:
+                    src_p = source_obj.Params.Output[idx]
+            # Default to first
+            if not src_p and source_obj.Params.Output.Count > 0:
+                src_p = source_obj.Params.Output[0]
+        
+        if not src_p: return {"status": "error", "result": "Source parameter not found"}
+
+        # Resolve Target Param (Input)
+        tgt_p = None
+        if isinstance(target_obj, Grasshopper.Kernel.IGH_Param):
+            tgt_p = target_obj
+        elif isinstance(target_obj, Grasshopper.Kernel.IGH_Component):
+            if target_param:
+                for p in target_obj.Params.Input:
+                    if p.Name == target_param or p.NickName == target_param:
+                        tgt_p = p
+                        break
+            if not tgt_p and str(target_param).isdigit():
+                idx = int(target_param)
+                if idx < target_obj.Params.Input.Count:
+                    tgt_p = target_obj.Params.Input[idx]
+            if not tgt_p and target_obj.Params.Input.Count > 0:
+                tgt_p = target_obj.Params.Input[0]
+        
+        if not tgt_p: return {"status": "error", "result": "Target parameter not found"}
+        
+        # Connect
+        tgt_p.AddSource(src_p)
+        source_obj.ExpireSolution(True)
+        target_obj.ExpireSolution(True)
+        
+        # Check for runtime messages on target object after connection
+        runtime_messages = []
+        try:
+            if hasattr(target_obj, "RuntimeMessages") and hasattr(target_obj, "RuntimeMessageLevel"):
+                messages = target_obj.RuntimeMessages(target_obj.RuntimeMessageLevel)
+                runtime_messages = [str(m) for m in messages] if messages else []
+        except:
+            pass
+
+        return {
+            "status": "success", 
+            "result": "Connected", 
+            "target_runtime_messages": runtime_messages
+        }
+        
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _disconnect_components_ui(target_id, target_param, source_id=None):
+    doc = get_active_gh_doc()
+    try:
+        target_obj = doc.FindObject(Guid.Parse(target_id), False)
+        if not target_obj: return {"status": "error", "result": "Target object not found"}
+
+        tgt_p = None
+        if isinstance(target_obj, Grasshopper.Kernel.IGH_Param):
+            tgt_p = target_obj
+        elif isinstance(target_obj, Grasshopper.Kernel.IGH_Component):
+            if target_param:
+                for p in target_obj.Params.Input:
+                    if p.Name == target_param or p.NickName == target_param:
+                        tgt_p = p
+                        break
+            if not tgt_p and str(target_param).isdigit():
+                idx = int(target_param)
+                if idx < target_obj.Params.Input.Count:
+                    tgt_p = target_obj.Params.Input[idx]
+
+        if not tgt_p: return {"status": "error", "result": "Target parameter not found"}
+
+        if source_id:
+            # Disconnect specific source
+            # Need to find the source param guid to remove it, usually we iterate sources
+            source_guid = Guid.Parse(source_id)
+            sources_to_remove = []
+            for src in tgt_p.Sources:
+                # Source might be a param or a component's output param
+                # Check if src is the param itself or belongs to the component
+                if src.InstanceGuid == source_guid:
+                    sources_to_remove.append(src.InstanceGuid)
+                elif src.Attributes and src.Attributes.Parent and src.Attributes.Parent.InstanceGuid == source_guid:
+                    sources_to_remove.append(src.InstanceGuid)
+            
+            if not sources_to_remove:
+                return {"status": "error", "result": "Source connection not found"}
+            
+            for g in sources_to_remove:
+                tgt_p.RemoveSource(g)
+        else:
+            # Disconnect all
+            tgt_p.RemoveAllSources()
+
+        tgt_p.ExpireSolution(True)
+        return {"status": "success", "result": "Disconnected"}
+
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _set_component_value_ui(instance_guid, value):
+    doc = get_active_gh_doc()
+    try:
+        obj = doc.FindObject(Guid.Parse(instance_guid), False)
+        if not obj: return {"status": "error", "result": "Object not found"}
+
+        if isinstance(obj, Grasshopper.Kernel.Special.GH_NumberSlider):
+            # Check if value is a dict or a JSON string representing a dict
+            props = None
+            if isinstance(value, dict):
+                props = value
+            elif isinstance(value, (str, unicode)):
+                try:
+                    import json
+                    props = json.loads(value)
+                    if not isinstance(props, dict): props = None
+                except:
+                    pass
+            
+            if props:
+                # Advanced update: { "value": 10, "min": 0, "max": 100, "decimals": 0 }
+                s = obj.Slider
+                if "min" in props: s.Minimum = System.Decimal(float(props["min"]))
+                if "max" in props: s.Maximum = System.Decimal(float(props["max"]))
+                if "decimals" in props: s.DecimalPlaces = int(props["decimals"])
+                if "value" in props: obj.SetSliderValue(System.Decimal(float(props["value"])))
+            else:
+                obj.SetSliderValue(System.Decimal(float(value)))
+        elif isinstance(obj, Grasshopper.Kernel.Special.GH_Panel):
+            obj.SetUserText(str(value))
+        elif isinstance(obj, Grasshopper.Kernel.Special.GH_BooleanToggle):
+            # Handle string "True"/"False" or bool
+            val = value
+            if isinstance(val, (str, unicode)):
+                val = val.lower() == "true"
+            obj.Value = bool(val)
+        else:
+            return {"status": "error", "result": "Setting value not supported for this type: " + str(type(obj))}
+            
+        obj.ExpireSolution(True)
+        return {"status": "success", "result": "Value updated"}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _set_component_state_ui(instance_guid, preview, enabled, locked, wire_display):
+    doc = get_active_gh_doc()
+    try:
+        obj = doc.FindObject(Guid.Parse(instance_guid), False)
+        if not obj: return {"status": "error", "result": "Object not found"}
+
+        if enabled is not None:
+            if hasattr(obj, "Locked"): # In GH, Locked usually means "Disabled" in interaction, but "Enabled" usually means solving.
+                # Actually IGH_ActiveObject has 'Locked' (Selection) and 'Enabled' (Solving) is separate?
+                # Check API: IGH_ActiveObject has Locked (bool). 
+                # There is also GH_DocumentObject.Attributes.Enabled ? No.
+                # It's obj.Locked (Selection lock). 
+                # Solvable is obj.Locked = False usually allows interaction.
+                # For disabling solving: obj.Locked = False? No.
+                # Component.Locked -> User cannot select it.
+                # Component.Enabled -> Helper to set Locked=false?
+                # Let's check common properties.
+                # IGH_ActiveObject properties: Locked (bool), NickName (str).
+                # To Disable (Grey out): It is usually `obj.Locked = False` ? No.
+                # Disabling a component from solving: `obj.Locked` is about UI interaction.
+                # `obj.Enabled` property exists on IGH_ActiveObject?
+                pass
+            
+            # Use Attributes for Enable/Disable (Solving)?
+            # Actually, `obj.Locked` is for locking selection.
+            # `obj.MutableNickName` ...
+            # To disable solving: `obj.ExpireSolution(False)` doesn't disable.
+            # It seems `obj.Locked` is strictly for UI selection locking.
+            # To disable (stop computing): `obj.Enabled` property exists on IGH_ActiveObject.
+            if hasattr(obj, "Enabled"):
+                obj.Enabled = bool(enabled)
+        
+        if locked is not None:
+             if hasattr(obj, "Locked"):
+                 obj.Locked = bool(locked)
+
+        if preview is not None:
+            if hasattr(obj, "Hidden"):
+                obj.Hidden = not bool(preview)
+                
+        if wire_display is not None and hasattr(obj, "Attributes"):
+            # wire_display: "default", "faint", "hidden"
+            wd = str(wire_display).lower()
+            if wd == "hidden": obj.Attributes.WireDisplay = Grasshopper.GUI.Canvas.GH_WireDisplay.hidden
+            elif wd == "faint": obj.Attributes.WireDisplay = Grasshopper.GUI.Canvas.GH_WireDisplay.faint
+            else: obj.Attributes.WireDisplay = Grasshopper.GUI.Canvas.GH_WireDisplay.default
+            
+        obj.ExpireSolution(True)
+        return {"status": "success", "result": "State updated"}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _create_group_ui(component_ids, group_name):
+    doc = get_active_gh_doc()
+    try:
+        group = Grasshopper.Kernel.Special.GH_Group()
+        group.CreateAttributes()
+        group.NickName = group_name
+        
+        for uid in component_ids:
+            obj = doc.FindObject(Guid.Parse(uid), False)
+            if obj:
+                group.AddObject(obj.InstanceGuid)
+        
+        doc.AddObject(group, False)
+        group.ExpireCaches()
+        return {"status": "success", "result": str(group.InstanceGuid)}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _delete_objects_ui(object_ids):
+    doc = get_active_gh_doc()
+    try:
+        count = 0
+        for uid in object_ids:
+            # Try to parse GUID, handle potential errors
+            try:
+                guid = Guid.Parse(str(uid))
+            except:
+                continue
+                
+            obj = doc.FindObject(guid, False)
+            if obj:
+                doc.RemoveObject(obj, False)
+                count += 1
+        return {"status": "success", "result": "Deleted {} objects".format(count)}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _clear_canvas_ui():
+    doc = get_active_gh_doc()
+    try:
+        if doc:
+            doc.SelectAll()
+            doc.RemoveObjects(doc.SelectedObjects(), False)
+            return {"status": "success", "result": "Canvas cleared"}
+        return {"status": "error", "result": "No active document"}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def _bake_objects_ui(object_ids):
+    doc = get_active_gh_doc()
+    rhino_doc = Rhino.RhinoDoc.ActiveDoc
+    try:
+        baked_ids = []
+        for uid in object_ids:
+            obj = doc.FindObject(Guid.Parse(uid), False)
+            if not obj: continue
+            
+            params_to_bake = []
+            if isinstance(obj, Grasshopper.Kernel.IGH_Param):
+                params_to_bake.append(obj)
+            elif isinstance(obj, Grasshopper.Kernel.IGH_Component):
+                for out_param in obj.Params.Output:
+                    params_to_bake.append(out_param)
+            
+            for p in params_to_bake:
+                if p.VolatileDataCount == 0: continue
+                try:
+                    atts = rhino_doc.CreateDefaultAttributes()
+                    new_ids = List[Guid]()
+                    p.BakeGeometry(rhino_doc, atts, new_ids)
+                    for gid in new_ids:
+                        baked_ids.append(str(gid))
+                except Exception as bake_err:
+                    Rhino.RhinoApp.WriteLine("[MCP] Bake error for {}: {}".format(p.NickName, bake_err))
+        
+        if baked_ids:
+            rhino_doc.Views.Redraw()
+            
+        return {"status": "success", "result": {"baked_count": len(baked_ids), "ids": baked_ids}}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
+
+def get_gh_canvas_stats():
+    doc = get_active_gh_doc()
+    if not doc: return {"status": "error", "result": "No document"}
+    
+    return {"status": "success", "result": {
+        "object_count": doc.ObjectCount,
+        "selected_count": doc.SelectedCount,
+        "file_name": doc.DisplayName,
+        "document_id": str(doc.DocumentID)
+    }}
+
+def search_gh_components(query, limit=10):
+    try:
+        proxies = Grasshopper.Instances.ComponentServer.ObjectProxies
+        results = []
+        q = query.lower()
+        count = 0
+        for proxy in proxies:
+            if not proxy.Desc: continue
+            if q in proxy.Desc.Name.lower() or q in proxy.Desc.NickName.lower() or q in proxy.Desc.Description.lower():
+                results.append({
+                    "name": proxy.Desc.Name,
+                    "nickname": proxy.Desc.NickName,
+                    "description": proxy.Desc.Description,
+                    "category": proxy.Desc.Category,
+                    "guid": str(proxy.Guid)
+                })
+                count += 1
+                if count >= limit: break
+        return results
+    except Exception as e:
+        return []
+
 # --- Command Processing ---
 def process_command(cmd):
     ctype = cmd.get("type")
+    
+    # --- Helper to run UI action ---
+    def run_ui(func, *args, **kwargs):
+        res_container = {}
+        # Wait event for synchronization
+        evt = threading.Event()
+        
+        def _action():
+            try:
+                res_container["val"] = func(*args, **kwargs)
+            except Exception as e:
+                res_container["val"] = {"status": "error", "result": str(e)}
+            finally:
+                evt.set()
+                
+        Rhino.RhinoApp.InvokeOnUiThread(Action(_action))
+        
+        # Wait for UI thread to complete (timeout 5s)
+        if not evt.wait(5.0):
+             return {"status": "error", "result": "UI action timed out"}
+             
+        return res_container.get("val", {"status": "error", "result": "UI call failed"})
+
     if ctype == "test":
         return {"status": "success", "result": "Rhino-MCP Alive"}
     
@@ -625,7 +1030,9 @@ def process_command(cmd):
     
     elif ctype == "expire_component":
         doc = get_active_gh_doc()
-        return expire_grasshopper_component(doc, cmd.get("instance_guid"))
+        def _exp():
+             return expire_grasshopper_component(doc, cmd.get("instance_guid"))
+        return run_ui(_exp) # expire needs UI thread? Safe to do so.
         
     elif ctype == "get_objects":
         return {"status": "success", "result": get_objects_with_context(cmd.get("instance_guids", []), cmd.get("context_depth", 0), cmd.get("simplified", False))}
@@ -649,6 +1056,44 @@ def process_command(cmd):
             return {"status": "success", "result": str(loc.get("result", "Executed"))}
         except Exception as e:
             return {"status": "error", "result": str(e)}
+
+    # --- New Commands ---
+    elif ctype == "create_component":
+        return run_ui(_create_component_ui, cmd.get("name"), cmd.get("x", 0), cmd.get("y", 0))
+        
+    elif ctype == "connect_components":
+        return run_ui(_connect_components_ui, cmd.get("source_id"), cmd.get("source_param"), cmd.get("target_id"), cmd.get("target_param"))
+        
+    elif ctype == "disconnect_components":
+        return run_ui(_disconnect_components_ui, cmd.get("target_id"), cmd.get("target_param"), cmd.get("source_id"))
+        
+    elif ctype == "set_component_value":
+        return run_ui(_set_component_value_ui, cmd.get("instance_guid"), cmd.get("value"))
+        
+    elif ctype == "set_component_state":
+        return run_ui(_set_component_state_ui, cmd.get("instance_guid"), cmd.get("preview"), cmd.get("enabled"), cmd.get("locked"), cmd.get("wire_display"))
+        
+    elif ctype == "create_group":
+        return run_ui(_create_group_ui, cmd.get("component_ids", []), cmd.get("group_name", "Group"))
+        
+    elif ctype == "delete_objects":
+        return run_ui(_delete_objects_ui, cmd.get("object_ids", []))
+        
+    elif ctype == "clear_canvas":
+        if cmd.get("confirm") is not True:
+             return {"status": "error", "result": "Confirm must be True"}
+        return run_ui(_clear_canvas_ui)
+        
+    elif ctype == "bake_objects":
+        return run_ui(_bake_objects_ui, cmd.get("object_ids", []))
+        
+    elif ctype == "get_canvas_stats":
+        return run_ui(get_gh_canvas_stats)
+        
+    elif ctype == "search_components":
+        # Read-only, no UI thread needed strictly but safer
+        # I need to implement search_gh_components helper in the block above
+        return {"status": "success", "result": search_gh_components(cmd.get("query"), cmd.get("limit", 10))}
 
     elif ctype == "get_server_status":
         is_headless = False
@@ -854,12 +1299,19 @@ def server_loop():
                              conn.close()
                              continue
 
-                        cmd = json.loads(data.decode())
-                        res = process_command(cmd)
+                        try:
+                            cmd = json.loads(data.decode())
+                            res = process_command(cmd)
+                        except Exception as process_err:
+                            res = {"status": "error", "result": "Internal error in process_command: " + str(process_err)}
+                            Rhino.RhinoApp.WriteLine("[MCP] Error in process_command: " + str(process_err))
                         
-                        res_json = json.dumps(res, cls=GHEncoder)
-                        http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
-                        conn.sendall(http.encode())
+                        try:
+                            res_json = json.dumps(res, cls=GHEncoder)
+                            http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
+                            conn.sendall(http.encode())
+                        except Exception as send_err:
+                            Rhino.RhinoApp.WriteLine("[MCP] Error sending response: " + str(send_err))
                         
                     except Exception as e:
                         Rhino.RhinoApp.WriteLine("[MCP] Error handling req: {}".format(e))
