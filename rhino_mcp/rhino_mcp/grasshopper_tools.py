@@ -176,7 +176,7 @@ def sanitize_json(json_str_or_dict: Union[str, Dict]) -> Dict[str, Any]:
     return {}
 
 class GrasshopperConnection:
-    def __init__(self, host='localhost', port=9999):  # Using port 9999 to match gh_socket_server.py
+    def __init__(self, host='localhost', port=9999):  # Using port 9999 to match grasshopper_mcp_bridge.py
         self.host = host
         self.port = port
         self.base_url = f"http://{host}:{port}"

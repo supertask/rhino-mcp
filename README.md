@@ -26,7 +26,7 @@ RhinoMCP connects Rhino, Grasshopper and more to Claude AI through the Model Con
 
 The system consists of two main components:
 
-1. **Rhino-side Script (`rhino_script.py`)**: A Python script that runs inside Rhino to create a socket server that receives and executes commands
+1. **Rhino-side Script (`rhino_mcp_bridge.py`)**: A Python script that runs inside Rhino to create a socket server that receives and executes commands
 2. **MCP Server (`rhino_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Rhino script
 
 ## Installation
@@ -63,7 +63,7 @@ The system consists of two main components:
 2. Open the Python Editor:
    - Click on the "Tools" menu
    - Select "Python Script" -> "Run.."
-   - Navigate to and select `rhino_mcp_client.py`
+   - Navigate to and select `rhino_mcp_bridge.py`
 4. The script will start automatically and you should see these messages in the Python Editor:
    ```
    RhinoMCP script loaded. Server started automatically.
@@ -79,7 +79,7 @@ The MCP server will be started automatically by Claude Desktop using the configu
 1. First, start the Rhino script:
    - Open Rhino 7
    - Open the Python Editor
-   - Open and run `rhino_mcp_client.py`
+   - Open and run `rhino_mcp_bridge.py`
    - Verify you see the startup messages in the Python Editor
 
 2. Then start Claude Desktop:
@@ -155,7 +155,7 @@ To integrate with Cursor IDE:
 
 The package includes enhanced Grasshopper integration:
 
-1. Start the Grasshopper server component (in rhino_mcp/grasshopper_mcp_client.gh)
+1. Start the Grasshopper server component (source code in `rhino_mcp/grasshopper_mcp_bridge.py`)
 
 
 
@@ -208,7 +208,7 @@ Here are some examples of what you can ask Claude to do:
 
 To add new functionality, you need to:
 
-1. Add new command handlers and functions in `rhino_script.py` and the `RhinoMCPServer` class.
+1. Add new command handlers and functions in `rhino_mcp_bridge.py` and the `RhinoMCPServer` class.
 2. Add corresponding MCP tools in `server.py` that include tool and arg descriptions
 
 ## License
