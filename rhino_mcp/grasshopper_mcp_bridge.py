@@ -38,28 +38,28 @@ LANGUAGE = 'ja'  # 'en' for English, 'ja' for Japanese
 
 MESSAGES = {
     'en': {
-        'zombie_killed_socket': "Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
-        'zombie_killed_os': "Success: Force killed zombie Rhino.exe (PID: {1}) on port {0}. Restarting server...",
-        'server_is_active_ui': "Port {0} is held by an active Rhino instance (UI is visible). Grasshopper MCP Server start aborted.",
-        'port_in_use_check': "Port {0} is in use. Checking for zombie process...",
-        'server_already_running': "Server is already running",
-        'port_in_use': "Error: Port {0} is already in use!",
-        'check_other_instance': "Please check if another Rhino instance is running.",
-        'server_started': "Rhino-Grasshopper Internal MCP Bridge started on {0}:{1}",
-        'start_failed': "Failed to start server: {0}",
-        'server_stopped': "Rhino-Grasshopper Internal MCP Bridge Stopped"
+        'zombie_killed_socket': "[GH MCP] Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
+        'zombie_killed_os': "[GH MCP] Success: Force killed zombie Rhino.exe (PID: {1}) on port {0}. Restarting server...",
+        'server_is_active_ui': "[GH MCP] Port {0} is held by an active Rhino instance (UI is visible). Grasshopper MCP Server start aborted.",
+        'port_in_use_check': "[GH MCP] Port {0} is in use. Checking for zombie process...",
+        'server_already_running': "[GH MCP] Server is already running",
+        'port_in_use': "[GH MCP] Error: Port {0} is already in use!",
+        'check_other_instance': "[GH MCP] Please check if another Rhino instance is running.",
+        'server_started': "[GH MCP] Rhino-Grasshopper Internal MCP Bridge started on {0}:{1}",
+        'start_failed': "[GH MCP] Failed to start server: {0}",
+        'server_stopped': "[GH MCP] Rhino-Grasshopper Internal MCP Bridge Stopped"
     },
     'ja': {
-        'zombie_killed_socket': u"ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
-        'zombie_killed_os': u"正常：ポート{0}を使用中のゾンビアプリのRhino.exe（PID: {1}）を強制終了してサーバを再起動します...",
-        'server_is_active_ui': u"ポート{0}は現在使用中のRhino（UIあり）によって使用されています。Rhino-Grasshopperアプリ内部 MCPブリッジの起動を中止します。",
-        'port_in_use_check': u"ポート{0}は使用中です。ゾンビプロセスの確認中...",
-        'server_already_running': u"サーバーは既に起動しています",
-        'port_in_use': u"エラー: ポート {0} は既に使用されています！",
-        'check_other_instance': u"他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
-        'server_started': u"Rhino-Grasshopperアプリ内部 MCPブリッジを起動しました: {0}:{1}",
-        'start_failed': u"サーバーの起動に失敗しました: {0}",
-        'server_stopped': u"Rhino-Grasshopperアプリ内部 MCPブリッジを停止しました"
+        'zombie_killed_socket': u"[GH MCP] ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
+        'zombie_killed_os': u"[GH MCP] 正常：ポート{0}を使用中のゾンビアプリのRhino.exe（PID: {1}）を強制終了してサーバを再起動します...",
+        'server_is_active_ui': u"[GH MCP] ポート{0}は現在使用中のRhino（UIあり）によって使用されています。Rhino-Grasshopperアプリ内部 MCPブリッジの起動を中止します。",
+        'port_in_use_check': u"[GH MCP] ポート{0}は使用中です。ゾンビプロセスの確認中...",
+        'server_already_running': u"[GH MCP] サーバーは既に起動しています",
+        'port_in_use': u"[GH MCP] エラー: ポート {0} は既に使用されています！",
+        'check_other_instance': u"[GH MCP] 他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
+        'server_started': u"[GH MCP] Rhino-Grasshopperアプリ内部 MCPブリッジを起動しました: {0}:{1}",
+        'start_failed': u"[GH MCP] サーバーの起動に失敗しました: {0}",
+        'server_stopped': u"[GH MCP] Rhino-Grasshopperアプリ内部 MCPブリッジを停止しました"
     }
 }
 
@@ -869,7 +869,7 @@ def server_loop():
                 continue
                 
     except Exception as e:
-        Rhino.RhinoApp.WriteLine("[MCP] Server Fatal Error: {}".format(e))
+        Rhino.RhinoApp.WriteLine("[GH MCP] Server Fatal Error: {}".format(e))
     finally:
         server.close()
         # 実際に稼働していた（sc.stickyがTrueだった）場合のみ停止メッセージを出す
@@ -882,7 +882,7 @@ if __name__ == "__main__":
     if sc.sticky["gh_mcp_run_server"]:
         # Stop
         sc.sticky["gh_mcp_run_server"] = False
-        Rhino.RhinoApp.WriteLine("[MCP] Stopping Server (wait for loop to exit)...")
+        Rhino.RhinoApp.WriteLine("[GH MCP] Stopping Server (wait for loop to exit)...")
     else:
         # Start
         sc.sticky["gh_mcp_run_server"] = True
@@ -890,4 +890,4 @@ if __name__ == "__main__":
         t.daemon = True
         t.start()
         sc.sticky["gh_mcp_server_thread"] = t
-        # Rhino.RhinoApp.WriteLine("[MCP] Starting Server Thread...")
+        # Rhino.RhinoApp.WriteLine("[GH MCP] Starting Server Thread...")

@@ -33,42 +33,36 @@ ANNOTATION_LAYER = "MCP_Annotations"
 
 MESSAGES = {
     'en': {
-        'zombie_killed_socket': "Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
-        'zombie_killed_os': "Success: Force killed zombie Rhino.exe (PID: {1}) on port {0}. Restarting server...",
-        'server_is_active_ui': "Port {0} is held by an active Rhino instance (UI is visible).  Rhino MCP Server start aborted.",
-        'port_in_use_check': "Port {0} is in use. Checking for zombie process...",
-        'server_already_running': "Server is already running",
-        'port_in_use': "Error: Port {0} is already in use!",
-        'check_other_instance': "Please check if another Rhino instance is running.",
-        'server_started': "Rhino Internal MCP Bridge started on {0}:{1}",
-        'start_failed': "Failed to start server: {0}",
-        'server_stopped': "Rhino Internal MCP Bridge stopped",
-        'client_connected': "Client connected from {0}:{1}",
-        'client_disconnected': "Client disconnected",
-        'response_sent': "Response sent successfully",
-        'scene_info_start': "Getting simplified scene info...",
-        'scene_info_success': "Simplified scene info collected successfully",
-        'script_loaded': "RhinoMCP script loaded. Server started automatically.",
-        'stop_instruction': "To stop the server, run: stop_server()"
+        'zombie_killed_socket': "[Rhino MCP] Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
+        'zombie_killed_os': "[Rhino MCP] Success: Force killed zombie Rhino.exe (PID: {1}) on port {0}. Restarting server...",
+        'server_is_active_ui': "[Rhino MCP] Port {0} is held by an active Rhino instance (UI is visible).  Rhino MCP Server start aborted.",
+        'port_in_use_check': "[Rhino MCP] Port {0} is in use. Checking for zombie process...",
+        'server_already_running': "[Rhino MCP] Server is already running",
+        'port_in_use': "[Rhino MCP] Error: Port {0} is already in use!",
+        'check_other_instance': "[Rhino MCP] Please check if another Rhino instance is running.",
+        'server_started': "[Rhino MCP] Rhino Internal MCP Bridge started on {0}:{1}",
+        'start_failed': "[Rhino MCP] Failed to start server: {0}",
+        'server_stopped': "[Rhino MCP] Rhino Internal MCP Bridge stopped",
+        'scene_info_start': "[Rhino MCP] Getting simplified scene info...",
+        'scene_info_success': "[Rhino MCP] Simplified scene info collected successfully",
+        'script_loaded': "[Rhino MCP] RhinoMCP script loaded. Server started automatically.",
+        'stop_instruction': "[Rhino MCP] To stop the server, run: stop_server()"
     },
     'ja': {
-        'zombie_killed_socket': u"ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
-        'zombie_killed_os': u"正常：ポート{0}を使用中のゾンビアプリのRhino.exe（PID: {1}）を強制終了してサーバを再起動します...",
-        'server_is_active_ui': u"ポート{0}は現在使用中のRhino（UIあり）によって使用されています。Rhinoアプリ内部 MCPブリッジの起動を中止します。",
-        'port_in_use_check': u"ポート{0}は使用中です。ゾンビプロセスの確認中...",
-        'server_already_running': u"サーバーは既に起動しています",
-        'port_in_use': u"エラー: ポート {0} は既に使用されています！",
-        'check_other_instance': u"他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
-        'server_started': u"Rhinoアプリ内部 MCPブリッジを起動しました: {0}:{1}",
-        'start_failed': u"サーバーの起動に失敗しました: {0}",
-        'server_stopped': u"Rhinoアプリ内部 MCPブリッジを停止しました",
-        'client_connected': u"クライアントが接続しました: {0}:{1}",
-        'client_disconnected': u"クライアントが切断しました",
-        'response_sent': u"レスポンスを送信しました",
-        'scene_info_start': u"シーン情報を取得中...",
-        'scene_info_success': u"シーン情報の取得に成功しました",
-        'script_loaded': u"RhinoMCPスクリプトが読み込まれました。サーバーは自動的に起動しました。",
-        'stop_instruction': u"サーバーを停止するには、次を実行してください: stop_server()"
+        'zombie_killed_socket': u"[Rhino MCP] ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
+        'zombie_killed_os': u"[Rhino MCP] 正常：ポート{0}を使用中のゾンビアプリのRhino.exe（PID: {1}）を強制終了してサーバを再起動します...",
+        'server_is_active_ui': u"[Rhino MCP] ポート{0}は現在使用中のRhino（UIあり）によって使用されています。Rhinoアプリ内部 MCPブリッジの起動を中止します。",
+        'port_in_use_check': u"[Rhino MCP] ポート{0}は使用中です。ゾンビプロセスの確認中...",
+        'server_already_running': u"[Rhino MCP] サーバーは既に起動しています",
+        'port_in_use': u"[Rhino MCP] エラー: ポート {0} は既に使用されています！",
+        'check_other_instance': u"[Rhino MCP] 他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
+        'server_started': u"[Rhino MCP] Rhinoアプリ内部 MCPブリッジを起動しました: {0}:{1}",
+        'start_failed': u"[Rhino MCP] サーバーの起動に失敗しました: {0}",
+        'server_stopped': u"[Rhino MCP] Rhinoアプリ内部 MCPブリッジを停止しました",
+        'scene_info_start': u"[Rhino MCP] シーン情報を取得中...",
+        'scene_info_success': u"[Rhino MCP] シーン情報の取得に成功しました",
+        'script_loaded': u"[Rhino MCP] RhinoMCPスクリプトが読み込まれました。サーバーは自動的に起動しました。",
+        'stop_instruction': u"[Rhino MCP] サーバーを停止するには、次を実行してください: stop_server()"
     }
 }
 
@@ -348,7 +342,7 @@ class RhinoMCPServer:
         while self.running:
             try:
                 client, addr = self.socket.accept()
-                log_message(get_message('client_connected', addr[0], addr[1]))
+                # log_message(get_message('client_connected', addr[0], addr[1]))
                 
                 # Handle client in a new thread
                 client_thread = threading.Thread(target=self._handle_client, args=(client,))
@@ -357,7 +351,7 @@ class RhinoMCPServer:
                 
             except Exception as e:
                 if self.running:
-                    log_message("Error accepting connection: {0}".format(str(e)))
+                    log_message("[Rhino MCP] Error accepting connection: {0}".format(str(e)))
                     time.sleep(0.5)
     
     def _handle_client(self, client):
@@ -371,12 +365,15 @@ class RhinoMCPServer:
                 # Receive command with larger buffer
                 data = client.recv(14485760)  # 10MB buffer
                 if not data:
-                    log_message(get_message('client_disconnected'))
+                    # log_message(get_message('client_disconnected'))
                     break
                     
                 try:
                     command = json.loads(data.decode('utf-8'))
-                    log_message("Received command: {0}".format(command))
+                    cmd_type = command.get("type", "unknown")
+                    # ステータス確認などの頻繁なログは抑制
+                    if cmd_type != "get_server_status":
+                        log_message("[Rhino MCP] コマンド受信: {0}".format(cmd_type))
                     
                     # Create a closure to capture the client connection
                     def execute_wrapper():
@@ -389,9 +386,9 @@ class RhinoMCPServer:
                             for i in range(0, len(response_bytes), chunk_size):
                                 chunk = response_bytes[i:i + chunk_size]
                                 client.sendall(chunk)
-                            log_message(get_message('response_sent'))
+                            # log_message(get_message('response_sent'))
                         except Exception as e:
-                            log_message("Error executing command: {0}".format(str(e)))
+                            log_message("[Rhino MCP] Error executing command: {0}".format(str(e)))
                             traceback.print_exc()
                             error_response = {
                                 "status": "error",
@@ -400,7 +397,7 @@ class RhinoMCPServer:
                             try:
                                 client.sendall(json.dumps(error_response).encode('utf-8'))
                             except Exception as e:
-                                log_message("Failed to send error response: {0}".format(str(e)))
+                                log_message("[Rhino MCP] Failed to send error response: {0}".format(str(e)))
                                 return False  # Signal connection should be closed
                         return True  # Signal connection should stay open
                     
