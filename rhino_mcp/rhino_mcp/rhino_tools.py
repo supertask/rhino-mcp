@@ -3,7 +3,7 @@ from mcp.server.fastmcp import FastMCP, Context, Image
 import logging
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List, Optional
+from typing import AsyncIterator, Dict, Any, List, Optional, Union
 import json
 import socket
 import time
@@ -201,48 +201,67 @@ class RhinoTools:
             logger.error("Error getting objects with metadata: {0}".format(str(e)))
             return "Error getting objects with metadata: {0}".format(str(e))
 
-    def capture_viewport(self, ctx: Context, layer: Optional[str] = None, show_annotations: bool = True, max_size: int = 800) -> Image:
+    def capture_viewport(self, ctx: Context, layer: Optional[str] = None, show_annotations: bool = True, max_size: int = 800, view: Optional[Union[str, List[str]]] = None, zoom_extents: bool = True) -> list:
         """Capture the current viewport as an image.
         
         Args:
             layer: Optional layer name to filter annotations
             show_annotations: Whether to show object annotations, this will display the short_id of the object in the viewport you can use the short_id to select specific objects with the get_objects_with_metadata function
+            view: Optional view name(s) to capture. Can be a single string (e.g. "Top", "Active"), a list of strings, or "All" for 7-view capture. Defaults to 4-view capture (Perspective, Top, Front, Right).
+            zoom_extents: Whether to perform Zoom Extents before capturing to fit all objects in view. Defaults to True.
         
         Returns:
-            An MCP Image object containing the viewport capture
+            A list of MCP Image objects containing the viewport capture(s)
         """
         try:
+            # Handle "All" shortcut for 7-side capture
+            target_view = view
+            if isinstance(view, str) and view.lower() == "all":
+                # Order matters: Top->Bottom (reuses Top), Front->Back (reuses Front), Right->Left (reuses Right), then Perspective
+                target_view = ["Top", "Bottom", "Front", "Back", "Right", "Left", "Perspective"]
+            
             connection = get_rhino_connection()
             result = connection.send_command("capture_viewport", {
                 "layer": layer,
                 "show_annotations": show_annotations,
-                "max_size": max_size
+                "max_size": max_size,
+                "view": target_view,
+                "zoom_extents": zoom_extents
             })
             
+            output_images = []
+            
+            # Handle single image response (backward compatibility)
             if result.get("type") == "image":
-                # Get base64 data from Rhino
                 base64_data = result["source"]["data"]
+                output_images.append(self._process_image_data(base64_data))
                 
-                # Convert base64 to bytes
-                image_bytes = base64.b64decode(base64_data)
-                
-                # Create PIL Image from bytes
-                img = PILImage.open(io.BytesIO(image_bytes))
-                
-                # Convert to PNG format for better quality and consistency
-                png_buffer = io.BytesIO()
-                img.save(png_buffer, format="PNG")
-                png_bytes = png_buffer.getvalue()
-                
-                # Return as MCP Image object
-                return Image(data=png_bytes, format="png")
-                
-            else:
+            # Handle multi-image response
+            elif result.get("type") == "multi_image":
+                for img_data in result.get("images", []):
+                    base64_data = img_data["data"]
+                    # We could also use img_data["label"] if needed
+                    output_images.append(self._process_image_data(base64_data))
+            
+            elif result.get("type") == "error":
+                 raise Exception(result.get("message", "Unknown error"))
+            
+            if not output_images:
                 raise Exception(result.get("text", "Failed to capture viewport"))
+                
+            return output_images
                 
         except Exception as e:
             logger.error("Error capturing viewport: {0}".format(str(e)))
             raise
+
+    def _process_image_data(self, base64_data: str) -> Image:
+        """Helper to convert base64 data to MCP Image"""
+        # Convert base64 to bytes
+        image_bytes = base64.b64decode(base64_data)
+        
+        # Return as MCP Image object in JPEG format (smaller size for VLM efficiency)
+        return Image(data=image_bytes, format="jpeg")
 
     def execute_rhino_code(self, ctx: Context, code: str) -> str:
         """Execute arbitrary Python code in Rhino.

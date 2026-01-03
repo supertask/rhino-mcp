@@ -818,93 +818,286 @@ class RhinoMCPServer:
                 "available_fields": all_fields
             }
 
+    def _capture_single_view(self, view_name, max_size, should_zoom_extents, show_annotations, layer_name, temp_dots_created=False):
+        """Helper to capture a single view. Assumes setup (layers etc) is done."""
+        original_view = None
+        pushed_projection = False
+        active_viewport = sc.doc.Views.ActiveView.ActiveViewport
+        
+        try:
+            # Handle view switching
+            if view_name:
+                # First, try to find an existing view with the given name
+                target_view = sc.doc.Views.Find(view_name, False)
+                if target_view:
+                    # If found, switch to it
+                    if sc.doc.Views.ActiveView.MainViewport.Id != target_view.MainViewport.Id:
+                        if original_view is None:
+                            original_view = sc.doc.Views.ActiveView
+                        sc.doc.Views.ActiveView = target_view
+                    active_viewport = sc.doc.Views.ActiveView.ActiveViewport
+                else:
+                    # If not found, use camera manipulation on the active view (fallback)
+                    tv_lower = view_name.lower()
+                    is_standard_view = False
+                    
+                    # Setup camera vectors based on view
+                    cam_loc = None
+                    cam_target = Rhino.Geometry.Point3d.Origin
+                    cam_up = Rhino.Geometry.Vector3d.ZAxis
+                    target_projection_mode = 1 # 1=Parallel, 2=Perspective
+                    
+                    if tv_lower == "top":
+                        cam_loc = Rhino.Geometry.Point3d(0, 0, 100)
+                        cam_up = Rhino.Geometry.Vector3d.YAxis
+                        is_standard_view = True
+                    elif tv_lower == "bottom":
+                        cam_loc = Rhino.Geometry.Point3d(0, 0, -100)
+                        cam_up = Rhino.Geometry.Vector3d.YAxis
+                        is_standard_view = True
+                    elif tv_lower == "right":
+                        cam_loc = Rhino.Geometry.Point3d(100, 0, 0)
+                        is_standard_view = True
+                    elif tv_lower == "left":
+                        cam_loc = Rhino.Geometry.Point3d(-100, 0, 0)
+                        is_standard_view = True
+                    elif tv_lower == "front":
+                        cam_loc = Rhino.Geometry.Point3d(0, -100, 0)
+                        is_standard_view = True
+                    elif tv_lower == "back":
+                        cam_loc = Rhino.Geometry.Point3d(0, 100, 0)
+                        is_standard_view = True
+                    elif tv_lower == "perspective":
+                        # 右斜め手前上空からのアングル (Right-Front-Top)
+                        # 右45度、上45度（仰角45度）からの俯瞰
+                        # XY距離(sqrt(100^2 + 100^2) ≈ 141.4)と同じ高さをZに設定することで45度になる
+                        cam_loc = Rhino.Geometry.Point3d(100, -100, 142)
+                        target_projection_mode = 2
+                        is_standard_view = True
+
+                    if is_standard_view:
+                        # Save current state and switch projection
+                        if not pushed_projection:
+                            active_viewport.PushViewProjection()
+                            pushed_projection = True
+                        
+                        # Special handling for Perspective to ensure correct angle relative to object
+                        if tv_lower == "perspective" and should_zoom_extents:
+                            # 1. Zoom Extents first to center on objects (without changing angle yet)
+                            selected_objects = rs.SelectedObjects()
+                            if selected_objects:
+                                active_viewport.ZoomBoundingBox(rs.BoundingBox(selected_objects))
+                            else:
+                                active_viewport.ZoomExtents()
+                            
+                            # 2. Get new target (center of view/object)
+                            target = active_viewport.CameraTarget
+                            
+                            # 3. Calculate new camera location relative to target
+                            # Right 45, Up 45 -> Vector (1, -1, sqrt(2)) normalized * distance
+                            dist = target.DistanceTo(active_viewport.CameraLocation)
+                            if dist < 100: dist = 200 # Minimum distance if too close
+                            
+                            # Direction: X=1, Y=-1, Z=1.414 (tan(45deg)=1, so Z should equal XY-dist. XY-dist of (1,1) is sqrt(2)=1.414. So Z=1.414)
+                            offset = Rhino.Geometry.Vector3d(1, -1, 1.4142)
+                            offset.Unitize()
+                            offset *= dist
+                            
+                            new_loc = target + offset
+                            
+                            try:
+                                rs.ViewProjection(None, 2) # Perspective
+                                rs.ViewCameraTarget(None, new_loc, target)
+                                rs.ViewCameraUp(None, Rhino.Geometry.Vector3d.ZAxis)
+                            except Exception as e:
+                                log_message("Error setting perspective camera: " + str(e))
+                            
+                            # Disable standard zoom extents as we handled it
+                            should_zoom_extents = False 
+                            
+                        else:
+                            # Apply view settings using rhinoscriptsyntax for safety
+                            try:
+                                # Force projection mode first
+                                rs.ViewProjection(None, target_projection_mode)
+                                
+                                # Then set camera
+                                rs.ViewCameraTarget(None, cam_loc, cam_target)
+                                rs.ViewCameraUp(None, cam_up)
+                                
+                            except Exception as e:
+                                 log_message("Error setting camera: " + str(e))
+                             
+                    else:
+                        log_message("Warning: View '{0}' not found. Using active view.".format(view_name))
+
+            # Handle Zoom Extents
+            if should_zoom_extents:
+                if not pushed_projection:
+                    active_viewport.PushViewProjection()
+                    pushed_projection = True
+                
+                # Check if objects are selected
+                selected_objects = rs.SelectedObjects()
+                if selected_objects:
+                    active_viewport.ZoomBoundingBox(rs.BoundingBox(selected_objects))
+                else:
+                    active_viewport.ZoomExtents()
+                    # After ZoomExtents, check if any objects were actually in view.
+                    # Sometimes ZoomExtents fails quietly or does weird things if no objects are visible/exist.
+                    pass 
+
+
+            # Apply changes
+            if pushed_projection or original_view:
+                sc.doc.Views.Redraw()
+            
+            # Capture
+            view = sc.doc.Views.ActiveView
+            memory_stream = MemoryStream()
+            
+            bitmap = view.CaptureToBitmap()
+            
+            width, height = bitmap.Width, bitmap.Height
+            if width > height:
+                new_width = max_size
+                new_height = int(height * (max_size / width))
+            else:
+                new_height = max_size
+                new_width = int(width * (max_size / height))
+            
+            resized_bitmap = Bitmap(bitmap, new_width, new_height)
+            resized_bitmap.Save(memory_stream, ImageFormat.Jpeg)
+            
+            bytes_array = memory_stream.ToArray()
+            image_data = base64.b64encode(bytes(bytearray(bytes_array))).decode('utf-8')
+            
+            bitmap.Dispose()
+            resized_bitmap.Dispose()
+            memory_stream.Dispose()
+            
+            return {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": image_data,
+                "label": view_name or "Active"
+            }
+            
+        finally:
+            # Restore view state
+            if pushed_projection:
+                vp = sc.doc.Views.ActiveView.ActiveViewport
+                vp.PopViewProjection()
+                sc.doc.Views.Redraw()
+
+            if original_view and original_view != sc.doc.Views.ActiveView:
+                sc.doc.Views.ActiveView = original_view
+
     def _capture_viewport(self, params):
-        """Capture viewport with optional annotations and layer filtering"""
+        """Capture viewport(s) with optional annotations and layer filtering"""
+        original_layer_name = rs.CurrentLayer()
+        temp_dots = []
+        
         try:
             layer_name = params.get("layer")
             show_annotations = params.get("show_annotations", True)
-            max_size = params.get("max_size", 800)  # Default max dimension
-            original_layer = rs.CurrentLayer()
-            temp_dots = []
-
+            max_size = params.get("max_size", 800)
+            target_view = params.get("view")
+            should_zoom_extents = params.get("zoom_extents", True)
+            
+            # Setup annotations (once for all views)
             if show_annotations:
-                # Ensure annotation layer exists and is current
                 if not rs.IsLayer(ANNOTATION_LAYER):
                     rs.AddLayer(ANNOTATION_LAYER, color=(255, 0, 0))
                 rs.CurrentLayer(ANNOTATION_LAYER)
                 
-                # Create temporary text dots for each object
-                for obj in sc.doc.Objects:
-                    if layer_name and rs.ObjectLayer(obj.Id) != layer_name:
-                        continue
+                # Iterate over all objects in the document
+                all_objects = sc.doc.Objects
+                if all_objects:
+                     for obj in all_objects:
+                        if layer_name and rs.ObjectLayer(obj.Id) != layer_name:
+                            continue
                         
-                    bbox = rs.BoundingBox(obj.Id)
-                    if bbox:
-                        pt = bbox[1]  # Use top corner of bounding box
-                        short_id = rs.GetUserText(obj.Id, "short_id")
-                        if not short_id:
-                            short_id = datetime.now().strftime("%d%H%M%S")
-                            rs.SetUserText(obj.Id, "short_id", short_id)
-                        
-                        name = rs.ObjectName(obj.Id) or "Unnamed"
-                        text = "{0}\n{1}".format(name, short_id)
-                        
-                        dot_id = rs.AddTextDot(text, pt)
-                        rs.TextDotHeight(dot_id, 8)
-                        temp_dots.append(dot_id)
-            
-            try:
-                view = sc.doc.Views.ActiveView
-                memory_stream = MemoryStream()
-                
-                # Capture to bitmap
-                bitmap = view.CaptureToBitmap()
-                
-                # Calculate new dimensions while maintaining aspect ratio
-                width, height = bitmap.Width, bitmap.Height
-                if width > height:
-                    new_width = max_size
-                    new_height = int(height * (max_size / width))
+                        # Only annotate if selected or if nothing is selected (show all)
+                        if rs.SelectedObjects() and not rs.IsObjectSelected(obj.Id):
+                            continue
+
+                        bbox = rs.BoundingBox(obj.Id)
+                        if bbox:
+                            pt = bbox[1]
+                            short_id = rs.GetUserText(obj.Id, "short_id")
+                            if not short_id:
+                                short_id = datetime.now().strftime("%d%H%M%S")
+                                rs.SetUserText(obj.Id, "short_id", short_id)
+                            
+                            name = rs.ObjectName(obj.Id) or "Unnamed"
+                            text = "{0}\\n{1}".format(name, short_id)
+                            
+                            dot_id = rs.AddTextDot(text, pt)
+                            rs.TextDotHeight(dot_id, 8)
+                            temp_dots.append(dot_id)
+
+            # Determine views to capture
+            views_to_capture = []
+            # Ensure target_view is a list of strings if it's not None
+            if isinstance(target_view, list):
+                # Convert all elements to string just in case
+                views_to_capture = [str(v) for v in target_view]
+            elif target_view:
+                # "Active" keyword to capture only the current active view
+                if str(target_view).lower() == "active":
+                    views_to_capture = [None]
                 else:
-                    new_height = max_size
-                    new_width = int(width * (max_size / height))
-                
-                # Create resized bitmap
-                resized_bitmap = Bitmap(bitmap, new_width, new_height)
-                
-                # Save as JPEG (IronPython doesn't support quality parameter)
-                resized_bitmap.Save(memory_stream, ImageFormat.Jpeg)
-                
-                bytes_array = memory_stream.ToArray()
-                image_data = base64.b64encode(bytes(bytearray(bytes_array))).decode('utf-8')
-                
-                # Clean up
-                bitmap.Dispose()
-                resized_bitmap.Dispose()
-                memory_stream.Dispose()
-                
-            finally:
-                if temp_dots:
-                    rs.DeleteObjects(temp_dots)
-                rs.CurrentLayer(original_layer)
+                    views_to_capture = [str(target_view)]
+            else:
+                # Default to standard 4-view layout if no view is specified
+                views_to_capture = ["Perspective", "Top", "Front", "Right"]
+
+            images = []
+            for v_name in views_to_capture:
+                # Pre-switch active view for specific standard views to ensure correct base viewport is used
+                # This prevents e.g. "Left" being captured using "Top" viewport, which might leave "Top" viewport in a weird state
+                # The _capture_single_view function restores the active view to what it was when called.
+                if v_name:
+                    v_lower = v_name.lower()
+                    base_view = None
+                    if v_lower == "bottom":
+                        base_view = sc.doc.Views.Find("Top", False)
+                    elif v_lower == "back":
+                        base_view = sc.doc.Views.Find("Front", False)
+                    elif v_lower == "left":
+                        base_view = sc.doc.Views.Find("Right", False)
+                    
+                    if base_view:
+                        sc.doc.Views.ActiveView = base_view
+
+                img_data = self._capture_single_view(
+                    v_name, max_size, should_zoom_extents, 
+                    show_annotations, layer_name, temp_dots_created=True
+                )
+                images.append(img_data)
             
             return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": image_data
-                }
+                "type": "multi_image",
+                "images": images
             }
             
         except Exception as e:
             log_message("Error capturing viewport: " + str(e))
-            if 'original_layer' in locals():
-                rs.CurrentLayer(original_layer)
             return {
-                "type": "text",
-                "text": "Error capturing viewport: " + str(e)
+                "type": "error",
+                "message": "Error capturing viewport: " + str(e)
             }
+            
+        finally:
+            if temp_dots:
+                rs.DeleteObjects(temp_dots)
+            
+            try:
+                if original_layer_name and rs.IsLayer(original_layer_name):
+                    rs.CurrentLayer(original_layer_name)
+            except:
+                pass
 
 # Create and start server
 server = RhinoMCPServer(HOST, PORT)
