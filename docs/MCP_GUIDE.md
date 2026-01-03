@@ -64,5 +64,5 @@
 *   **データ型**: Grasshopper の型 (Guid, Point3d) は、ブリッジスクリプト内の `GHEncoder` クラスでカスタムシリアライズされます。
 
 ## 5. ファイル構成
-*   `rhino-mcp/rhino_mcp/grasshopper_mcp_bridge.py`: **サーバーコード** (IronPython)。GH キャンバス操作のロジック。
-*   `rhino-mcp/rhino_mcp/rhino_mcp/grasshopper_tools.py`: **クライアントコード** (Python 3)。MCP ツール定義とソケットクライアント。
+*   `rhino-mcp/rhino_scripts/grasshopper_mcp_bridge.py`: **サーバーコード** (IronPython)。GH キャンバス操作のロジック。
+*   `rhino-mcp/src/rhino_mcp/grasshopper_tools.py`: **クライアントコード** (Python 3)。MCP ツール定義とソケットクライアント。
