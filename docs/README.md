@@ -6,23 +6,20 @@ RhinoMCP connects Rhino, Grasshopper and more to AI Agents through the Model Con
 
 ## Features
 
-#### Rhino
-- **Two-way communication**: Connect AI to Rhino through a socket-based server
-- **Object manipulation and management**: Create and modify 3D objects in Rhino including metadata
-- **Layer management**: View and interact with Rhino layers
-- **Scene inspection**: Get detailed information about the current Rhino scene (incl. screencapture) 
-- **Code execution**: Run arbitrary Python code in Rhino from AI
+### 🦏 Rhino Features
+- `get_scene_info`: Get scene overview and layers.
+- `capture_viewport`: Capture viewports as images.
+- `execute_rhino_code`: Run Python code to create/modify objects.
+- **[View All Rhino Tools](docs/FEATURES.md#rhino-mcp-tools)**
 
-#### Grasshopper
-- **Code execution**: Run arbitrary Python code in Grasshopper from AI - includes the generation of gh components
-- **Gh canvas inspection**: Get detailed information about your Grasshopper definition, including component graph and parameters
-- **Component management**: Update script components, modify parameters, and manage code references
-- **External code integration**: Link script components to external Python files for better code organization
-- **Real-time feedback**: Get component states, error messages, and runtime information
-- **Non-blocking communication**: Stable two-way communication via HTTP server
+### 🦗 Grasshopper Features
+- `get_gh_context`: Explore the full component graph.
+- `update_script`: Modify component code in real-time.
+- `bake_objects`: Transfer geometry to Rhino.
+- **[View All Grasshopper Tools](docs/FEATURES.md#grasshopper-mcp-tools)**
 
-#### Replicate
-- **AI Models**: replicate offers thousands of AI models via API, implemented here: a stable diffusion variant 
+### 🤖 Replicate Integration
+- **AI Rendering**: Generate high-quality renders using Stable Diffusion models via Replicate API.
 
 ## Project Structure
 

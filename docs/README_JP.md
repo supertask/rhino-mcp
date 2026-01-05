@@ -6,23 +6,20 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
 
 ## 機能
 
-#### Rhino
-- **双方向通信**: ソケットベースのサーバーを通じて AI を Rhino に接続
-- **オブジェクト操作と管理**: メタデータを含む Rhino 内の 3D オブジェクトの作成と変更
-- **レイヤー管理**: Rhino レイヤーの表示と操作
-- **シーン検査**: 現在の Rhino シーンに関する詳細情報の取得（スクリーンキャプチャを含む）
-- **コード実行**: AI から Rhino 内で任意の Python コードを実行
+### 🦏 Rhino の機能
+- `get_scene_info`: シーンの概要とレイヤーを取得します。
+- `capture_viewport`: ビューポートを画像としてキャプチャします。
+- `execute_rhino_code`: Python コードを実行してオブジェクトを作成・変更します。
+- **[すべての Rhino ツールを見る](docs/FEATURES_JP.md#rhino-mcp-ツール)**
 
-#### Grasshopper
-- **コード実行**: AI から Grasshopper 内で任意の Python コードを実行（GH コンポーネントの生成を含む）
-- **GH キャンバス検査**: コンポーネントグラフやパラメータを含む Grasshopper 定義の詳細情報の取得
-- **コンポーネント管理**: スクリプトコンポーネントの更新、パラメータ変更、コード参照の管理
-- **外部コード統合**: より良いコード構成のためにスクリプトコンポーネントを外部 Python ファイルにリンク
-- **リアルタイムフィードバック**: コンポーネントの状態、エラーメッセージ、ランタイム情報の取得
-- **ノンブロッキング通信**: HTTP サーバーを介した安定した双方向通信
+### 🦗 Grasshopper の機能
+- `get_gh_context`: コンポーネントグラフ全体を探索します。
+- `update_script`: コンポーネントのコードをリアルタイムで変更します。
+- `bake_objects`: ジオメトリを Rhino に転送します。
+- **[すべての Grasshopper ツールを見る](docs/FEATURES_JP.md#grasshopper-mcp-ツール)**
 
-#### Replicate
-- **AI モデル**: Replicate は API 経由で数千の AI モデルを提供します。ここでは Stable Diffusion のバリアントを実装しています。
+### 🤖 Replicate 統合
+- **AI レンダリング**: Replicate API を通じて Stable Diffusion モデルを使用し、高品質なレンダリングを生成します。
 
 ## プロジェクト構造
 
