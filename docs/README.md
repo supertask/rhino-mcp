@@ -10,13 +10,13 @@ RhinoMCP connects Rhino, Grasshopper and more to AI Agents through the Model Con
 - `get_scene_info`: Get scene overview and layers.
 - `capture_viewport`: Capture viewports as images.
 - `execute_rhino_code`: Run Python code to create/modify objects.
-- **[View All Rhino Tools](docs/FEATURES.md#rhino-mcp-tools)**
+- **[View All Rhino Tools](FEATURES.md#rhino-mcp-tools)**
 
 ### 🦗 Grasshopper Features
 - `get_gh_context`: Explore the full component graph.
 - `update_script`: Modify component code in real-time.
 - `bake_objects`: Transfer geometry to Rhino.
-- **[View All Grasshopper Tools](docs/FEATURES.md#grasshopper-mcp-tools)**
+- **[View All Grasshopper Tools](FEATURES.md#grasshopper-mcp-tools)**
 
 ### 🤖 Replicate Integration
 - **AI Rendering**: Generate high-quality renders using Stable Diffusion models via Replicate API.

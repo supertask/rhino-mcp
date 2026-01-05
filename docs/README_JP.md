@@ -10,13 +10,13 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
 - `get_scene_info`: シーンの概要とレイヤーを取得します。
 - `capture_viewport`: ビューポートを画像としてキャプチャします。
 - `execute_rhino_code`: Python コードを実行してオブジェクトを作成・変更します。
-- **[すべての Rhino ツールを見る](docs/FEATURES_JP.md#rhino-mcp-ツール)**
+- **[すべての Rhino ツールを見る](FEATURES_JP.md#rhino-mcp-ツール)**
 
 ### 🦗 Grasshopper の機能
 - `get_gh_context`: コンポーネントグラフ全体を探索します。
 - `update_script`: コンポーネントのコードをリアルタイムで変更します。
 - `bake_objects`: ジオメトリを Rhino に転送します。
-- **[すべての Grasshopper ツールを見る](docs/FEATURES_JP.md#grasshopper-mcp-ツール)**
+- **[すべての Grasshopper ツールを見る](FEATURES_JP.md#grasshopper-mcp-ツール)**
 
 ### 🤖 Replicate 統合
 - **AI レンダリング**: Replicate API を通じて Stable Diffusion モデルを使用し、高品質なレンダリングを生成します。
