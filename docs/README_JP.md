@@ -66,27 +66,20 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
    uv sync
    ```
 
-### Rhino 側スクリプトのインストール
+### Rhinoアプリ起動時にMCPブリッジ自動起動させる
 
-1. Rhino 7 を開きます。
-2. Python Editor を開きます：
-   - "Tools" (ツール) メニューをクリック
-   - "Python Script" -> "Run.." (実行) を選択
-   - このプロジェクトフォルダ内の `rhino_scripts/rhino_mcp_bridge.py` に移動して選択します。
-3. スクリプトが自動的に開始され、Python Editor に以下のメッセージが表示されます：
+Rhino を起動するたびにスクリプトを手動で実行する手間を省くために、以下の手順で自動起動を設定できます：
+
+1. Rhino を開きます。
+2. **Tools**（ツール）→ **Options**（オプション）→ **General**（全般）に移動します（または **ファイル**→**プロパティ**→**全般**からもアクセス可能）。
+3. **Command Lists**（コマンドリスト）の **Run these commands every time Rhino starts:**（Rhinoを開始するたびにこれらのコマンドを実行する）ボックスに以下を追加します。 `C:\path\to\rhino-mcp` の部分を、実際のプロジェクトフォルダの絶対パスに置き換えてください：
    ```
-   RhinoMCP script loaded. Server started automatically.
-   To stop the server, run: stop_server()
+   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\rhino_mcp_bridge.py"
+   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\grasshopper_mcp_bridge.py"
    ```
+4. **OK** をクリックし、Rhino を再起動します。
 
-### Grasshopper 側スクリプトのインストール
-
-1. Grasshopper を開きます。
-2. キャンバスに **GhPython Script** コンポーネントを配置します。
-3. コンポーネントを右クリック -> "Open Editor" (エディタを開く)。
-4. `rhino_scripts/grasshopper_mcp_bridge.py` の内容をコピーしてエディタに貼り付けます。
-   *あるいは、ファイルを直接リンクしたい場合（開発用に推奨）、GhPython コンポーネントの `code input` パラメータを使用してファイルを読み込んでください。*
-5. コンポーネントが実行されていることを確認します（Toggle を True に設定）。
+![Rhino 起動設定](images/rhino_python_command_setting.png)
 
 ## 設定
 
@@ -139,7 +132,7 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
 ## 使用方法
 
 設定が完了すると、Claude Desktop や Cursor を開いたときに MCP サーバーが自動的に起動します。
-ツールを使用する前に、**Rhino ブリッジスクリプト**が Rhino で実行されていることを確認してください。
+ツールを使用する前に、**Rhino/Grasshopper ブリッジスクリプト**が Rhino で実行されていることを確認してください。
 
 ### プロンプト例
 

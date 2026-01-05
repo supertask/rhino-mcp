@@ -66,27 +66,20 @@ We recommend using `uv` for fast and reliable dependency management.
    uv sync
    ```
 
-### Installing the Rhino-side Script
+### Automating MCP Bridge Startup on Rhino Launch
 
-1. Open Rhino 7
-2. Open the Python Editor:
-   - Click on the "Tools" menu
-   - Select "Python Script" -> "Run.."
-   - Navigate to `rhino_scripts/rhino_mcp_bridge.py` inside this project folder.
-3. The script will start automatically and you should see these messages in the Python Editor:
+To avoid running the scripts manually every time you start Rhino, you can add them to the Rhino startup commands:
+
+1. Open Rhino.
+2. Go to **Tools** -> **Options** -> **General** (You can also access this from **File** -> **Properties** -> **General**).
+3. Under **Command Lists**, find the box labeled **Run these commands every time Rhino starts:**. Add the following commands, replacing `C:\path\to\rhino-mcp` with the absolute path to your project folder:
    ```
-   RhinoMCP script loaded. Server started automatically.
-   To stop the server, run: stop_server()
+   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\rhino_mcp_bridge.py"
+   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\grasshopper_mcp_bridge.py"
    ```
+4. Click **OK** and restart Rhino.
 
-### Installing the Grasshopper-side Script
-
-1. Open Grasshopper.
-2. Place a **GhPython Script** component on the canvas.
-3. Right-click the component -> "Open Editor".
-4. Copy the content of `rhino_scripts/grasshopper_mcp_bridge.py` and paste it into the editor.
-   *Alternatively, if you want to link the file directly (recommended for dev), use the `code input` parameter of a GhPython component to read the file.*
-5. Ensure the component is running (Toggle set to True).
+![Rhino Startup Settings](images/rhino_python_command_setting.png)
 
 ## Configuration
 
