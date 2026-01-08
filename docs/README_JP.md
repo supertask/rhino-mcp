@@ -70,9 +70,16 @@ Rhino を起動するたびにスクリプトを手動で実行する手間を�
 1. Rhino を開きます。
 2. **Tools**（ツール）→ **Options**（オプション）→ **General**（全般）に移動します（または **ファイル**→**プロパティ**→**全般**からもアクセス可能）。
 3. **Command Lists**（コマンドリスト）の **Run these commands every time Rhino starts:**（Rhinoを開始するたびにこれらのコマンドを実行する）ボックスに以下を追加します。 `C:\path\to\rhino-mcp` の部分を、実際のプロジェクトフォルダの絶対パスに置き換えてください：
+For ANSI/ISO keyboard
    ```
    _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\rhino_mcp_bridge.py"
    _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\grasshopper_mcp_bridge.py"
+   ```
+
+For JIS keyboard
+   ```
+   _-RunPythonScript "C:¥path¥to¥rhino-mcp¥rhino_scripts¥rhino_mcp_bridge.py"
+   _-RunPythonScript "C:¥path¥to¥rhino-mcp¥rhino_scripts¥grasshopper_mcp_bridge.py"
    ```
 4. **OK** をクリックし、Rhino を再起動します。
 
