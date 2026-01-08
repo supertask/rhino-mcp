@@ -70,10 +70,20 @@ To avoid running the scripts manually every time you start Rhino, you can add th
 1. Open Rhino.
 2. Go to **Tools** -> **Options** -> **General** (You can also access this from **File** -> **Properties** -> **General**).
 3. Under **Command Lists**, find the box labeled **Run these commands every time Rhino starts:**. Add the following commands, replacing `C:\path\to\rhino-mcp` with the absolute path to your project folder:
+
+For ANSI/ISO keyboard
+   ```
+   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\rhino_mcp_bridge.py"
+   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\grasshopper_mcp_bridge.py"
+   ```
+
+For JIS keyboard
    ```
    _-RunPythonScript "C:¥path¥to¥rhino-mcp¥rhino_scripts¥rhino_mcp_bridge.py"
    _-RunPythonScript "C:¥path¥to¥rhino-mcp¥rhino_scripts¥grasshopper_mcp_bridge.py"
    ```
+
+
 4. Click **OK** and restart Rhino.
 
 ![Rhino Startup Settings](images/rhino_python_command_setting.png)
