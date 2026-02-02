@@ -73,14 +73,14 @@ To avoid running the scripts manually every time you start Rhino, you can add th
 
    For ANSI/ISO keyboard
    ```
-   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\rhino_mcp_bridge.py"
-   _-RunPythonScript "C:\path\to\rhino-mcp\rhino_scripts\grasshopper_mcp_bridge.py"
+   _-RunPythonScript "C:\\path\\to\\rhino-mcp\\rhino_scripts\\rhino_mcp_bridge.py"
+   _-RunPythonScript "C:\\path\\to\\rhino-mcp\\rhino_scripts\\grasshopper_mcp_bridge.py"
    ```
 
    For JIS keyboard
    ```
-   _-RunPythonScript "C:¥path¥to¥rhino-mcp¥rhino_scripts¥rhino_mcp_bridge.py"
-   _-RunPythonScript "C:¥path¥to¥rhino-mcp¥rhino_scripts¥grasshopper_mcp_bridge.py"
+   _-RunPythonScript "C:¥¥path¥¥to¥¥rhino-mcp¥¥rhino_scripts¥¥rhino_mcp_bridge.py"
+   _-RunPythonScript "C:¥¥path¥¥to¥rhino-mcp¥¥rhino_scripts¥¥grasshopper_mcp_bridge.py"
    ```
 
 
