@@ -42,7 +42,7 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
 
 依存関係の管理には、高速で信頼性の高い `uv` の使用を推奨します。
 
-1. このリポジトリをクローンします。
+1. このリポジトリをクローンします。Windows では、特にこだわりがなければ、配置先に `%USERPROFILE%\InstalledModules\rhino-mcp` を推奨します。
 
 2. 仮想環境を作成し、依存関係をインストールします：
    ```bash
@@ -127,6 +127,26 @@ Rhino を起動するたびにスクリプトを手動で実行する手間を�
     }
 }
 ```
+
+### ChatGPT デスクトップ / Codex 統合
+
+ローカル MCP に対応した ChatGPT デスクトップ／Codex では、`~/.codex/config.toml`（Windows: `%USERPROFILE%\.codex\config.toml`）に以下を追加します。ブラウザー版 ChatGPT には適用されません。
+
+```toml
+[mcp_servers.rhino]
+command = "uv"
+args = [
+    "run",
+    "--directory",
+    'C:\path\to\rhino-mcp',
+    "-m",
+    "rhino_mcp.server"
+]
+```
+
+パスを実際のクローン先に置き換え、保存後にアプリ／Codex を再起動してください。この1つの設定で Rhino・Grasshopper の両方に接続できます。Rhino 側のブリッジ起動は上記の手順と共通です。
+
+参考: [OpenAI 公式 MCP 設定ドキュメント](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
 
 ### Cursor IDE 統合
 

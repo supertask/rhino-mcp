@@ -42,7 +42,7 @@ The project follows a standard `src` layout:
 
 We recommend using `uv` for fast and reliable dependency management.
 
-1. Clone this repository.
+1. Clone this repository. On Windows, if you have no particular preference, we recommend placing it in `%USERPROFILE%\InstalledModules\rhino-mcp`.
 
 2. Create a virtual environment and install dependencies:
    ```bash
@@ -130,6 +130,26 @@ To avoid running the scripts manually every time you start Rhino, you can add th
     }
 }
 ```
+
+### ChatGPT Desktop / Codex Integration
+
+For ChatGPT desktop / Codex clients with local MCP support, add the following to `~/.codex/config.toml` (Windows: `%USERPROFILE%\.codex\config.toml`). This does not apply to ChatGPT web.
+
+```toml
+[mcp_servers.rhino]
+command = "uv"
+args = [
+    "run",
+    "--directory",
+    'C:\path\to\rhino-mcp',
+    "-m",
+    "rhino_mcp.server"
+]
+```
+
+Replace the path with your clone location, save, and restart your app / Codex. This single configuration connects to both Rhino and Grasshopper. Follow the bridge startup steps above in Rhino.
+
+Reference: [Official OpenAI MCP configuration documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
 
 ### Cursor IDE Integration
 
