@@ -69,6 +69,8 @@ class BridgeServerTestCase(unittest.TestCase):
                 raise RuntimeError("boom")
             if cmd.get("type") == "big":
                 return {"status": "success", "result": "x" * 200000}
+            if cmd.get("type") == "slow":
+                time.sleep(0.8)
             return {"status": "success", "result": u"受信: " + cmd.get("text", "")}
 
         self.bridge.process_command = fake_process_command
@@ -166,6 +168,17 @@ class HttpHandlingTests(BridgeServerTestCase):
         s.close()
         self._assert_quiet_and_still_serving()
         self.assertEqual([c["text"] for c in self.received], ["after"])
+
+    def test_client_gone_before_response_is_quiet(self):
+        """クライアントが待ちきれずに切断し、返事を送れなかった場合も画面に出さない。"""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        body = b'{"type": "slow"}'
+        s.sendall(b"POST / HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body))
+        time.sleep(0.2)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+        time.sleep(1.0)   # the bridge finishes the command and tries to answer
+        self._assert_quiet_and_still_serving()
 
     def test_reset_connection_is_quiet(self):
         s = socket.create_connection(("127.0.0.1", self.port), timeout=5)

@@ -1349,6 +1349,9 @@ def server_loop():
                             res_json = json.dumps(res, cls=GHEncoder)
                             http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
                             conn.sendall(http.encode())
+                        except socket.error:
+                            # The client stopped waiting and closed the connection
+                            pass
                         except Exception as send_err:
                             Rhino.RhinoApp.WriteLine("[MCP] Error sending response: " + str(send_err))
                         
