@@ -326,12 +326,13 @@ def sanitize_json(json_str_or_dict: Union[str, Dict]) -> Dict[str, Any]:
     
     # If it's a string, try to fix common issues
     if isinstance(json_str_or_dict, str):
+        # Remove markdown code block markers first: the preprocessor below
+        # turns backticks into quotes, after which the fence is unrecognizable
+        json_str = re.sub(r'^\s*```(?:json)?\s*', '', json_str_or_dict)
+        json_str = re.sub(r'\s*```\s*$', '', json_str)
+
         # Apply preprocessing for LLM input
-        json_str = preprocess_llm_input(json_str_or_dict)
-        
-        # Remove markdown JSON code block markers if present
-        json_str = re.sub(r'^```json\s*', '', json_str)
-        json_str = re.sub(r'\s*```$', '', json_str)
+        json_str = preprocess_llm_input(json_str)
         
         # Try to parse the JSON
         try:
@@ -447,7 +448,16 @@ class GrasshopperConnection:
                 
                 # Read the response content and return it directly
                 return response.json()
-                    
+
+        except requests.exceptions.ReadTimeout as timeout_err:
+            # The command was delivered but no answer came back in time.
+            # requests never re-sends a POST, so the command ran at most once.
+            error_msg = ("Grasshopperからの応答が{0}秒以内にありませんでした（{1}）。コマンド「{2}」が実行されたかは不明です。"
+                         "二重実行を防ぐため自動では再送していません。Grasshopperの状態を確認してから、必要な場合だけ再実行してください。").format(
+                             self.timeout, timeout_err, command_type)
+            logger.error(error_msg)
+            return {"status": "error", "result": error_msg}
+
         except requests.exceptions.RequestException as req_err:
             error_content = ""
             if hasattr(req_err, 'response') and req_err.response is not None:
@@ -632,7 +642,7 @@ class GrasshopperTools:
             
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
                 
         except Exception as e:
             return f"Error getting context: {str(e)}"
@@ -659,7 +669,7 @@ class GrasshopperTools:
             
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
                 
         except Exception as e:
             return f"Error getting objects: {str(e)}"
@@ -684,7 +694,7 @@ class GrasshopperTools:
             
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
                 
         except Exception as e:
             return f"Error getting selected components: {str(e)}"
@@ -842,7 +852,7 @@ class GrasshopperTools:
             
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
                 
         except Exception as e:
             return f"Error updating script: {str(e)}"
@@ -925,7 +935,7 @@ class GrasshopperTools:
             
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
                 
         except Exception as e:
             return f"Error updating script with code reference: {str(e)}"
@@ -955,7 +965,7 @@ class GrasshopperTools:
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
             # The server side already returns component info after expiring
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
 
         except Exception as e:
             return f"Error expiring component: {str(e)}"
@@ -982,7 +992,7 @@ class GrasshopperTools:
             })
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
         except Exception as e:
             return f"Error creating component: {str(e)}"
 
@@ -1006,7 +1016,7 @@ class GrasshopperTools:
             })
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", []), indent=2)
+            return json.dumps(result.get("result", []), indent=2, ensure_ascii=False)
         except Exception as e:
             return f"Error searching components: {str(e)}"
 
@@ -1202,7 +1212,7 @@ class GrasshopperTools:
             result = connection.send_command("get_canvas_stats", {})
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
-            return json.dumps(result.get("result", {}), indent=2)
+            return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
         except Exception as e:
             return f"Error getting stats: {str(e)}"
 

@@ -43,11 +43,12 @@ class SanitizeJsonTests(unittest.TestCase):
         self.assertEqual(result, original)
         self.assertIsNot(result, original)
 
-    @unittest.expectedFailure
-    def test_known_issue_markdown_code_fence_is_removed(self):
-        """既知の問題: preprocess_llm_input が先にバッククォートを " に置き換えるため、
-        ```json ... ``` の囲みを外す処理が効かず {} が返る。"""
+    def test_markdown_code_fence_is_removed(self):
         self.assertEqual(gt.sanitize_json('```json\n{"a": 1}\n```'), {"a": 1})
+        self.assertEqual(gt.sanitize_json('  ```\n{"a": 1}\n```  '), {"a": 1})
+
+    def test_markdown_code_fence_around_backtick_object(self):
+        self.assertEqual(gt.sanitize_json("```json\n{`a`: `b`}\n```"), {"a": "b"})
 
     def test_backtick_object(self):
         self.assertEqual(gt.sanitize_json("`{`instance_guid`: `abc`, `ok`: True}`"),
