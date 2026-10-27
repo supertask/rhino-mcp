@@ -1,4 +1,5 @@
-﻿import scriptcontext as sc
+# -*- coding: utf-8 -*-
+import scriptcontext as sc
 import clr
 import socket
 import threading
@@ -34,7 +35,7 @@ from Grasshopper.Kernel.Parameters import (
 # --- Constants ---
 HOST = "127.0.0.1"
 PORT = 9999
-SERVER_NAME = "Rhino-Grasshopperアプリ内部 MCPブリッジ・サーバー"
+SERVER_NAME = u"Rhino-Grasshopperアプリ内部 MCPブリッジ・サーバー"
 LANGUAGE = 'ja'  # 'en' for English, 'ja' for Japanese
 
 MESSAGES = {
@@ -412,7 +413,7 @@ def expire_grasshopper_component(doc, instance_guid_str):
             return {"status": "success", "result": get_param_info(obj, is_input=False)}
         return {"status": "success", "result": "Expired"}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _update_script_component_on_ui_thread(instance_guid_str, code, description, message_to_user, param_definitions):
     doc = get_active_gh_doc()
@@ -499,7 +500,7 @@ def _update_script_component_on_ui_thread(instance_guid_str, code, description, 
             return {"status": "success", "result": "Updated successfully"}
 
         except Exception as e:
-            return {"status": "error", "result": str(e)}
+            return {"status": "error", "result": unicode(e)}
         finally:
             if canvas: 
                 canvas.Document.Enabled = True
@@ -605,7 +606,7 @@ def _update_code_ref_ui(instance_guid_str, file_path, param_definitions, descrip
             if canvas: canvas.Document.Enabled = True; canvas.Refresh()
             
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def update_script_with_code_reference(instance_guid, **kwargs):
     result_holder = {}
@@ -731,7 +732,7 @@ def _connect_components_ui(source_id, source_param, target_id, target_param):
         }
         
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _disconnect_components_ui(target_id, target_param, source_id=None):
     doc = get_active_gh_doc()
@@ -781,7 +782,7 @@ def _disconnect_components_ui(target_id, target_param, source_id=None):
         return {"status": "success", "result": "Disconnected"}
 
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _set_component_value_ui(instance_guid, value):
     doc = get_active_gh_doc()
@@ -825,7 +826,7 @@ def _set_component_value_ui(instance_guid, value):
         obj.ExpireSolution(True)
         return {"status": "success", "result": "Value updated"}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _set_component_state_ui(instance_guid, preview, enabled, locked, wire_display):
     doc = get_active_gh_doc()
@@ -877,7 +878,7 @@ def _set_component_state_ui(instance_guid, preview, enabled, locked, wire_displa
         obj.ExpireSolution(True)
         return {"status": "success", "result": "State updated"}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _create_group_ui(component_ids, group_name):
     doc = get_active_gh_doc()
@@ -895,7 +896,7 @@ def _create_group_ui(component_ids, group_name):
         group.ExpireCaches()
         return {"status": "success", "result": str(group.InstanceGuid)}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _delete_objects_ui(object_ids):
     doc = get_active_gh_doc()
@@ -914,7 +915,7 @@ def _delete_objects_ui(object_ids):
                 count += 1
         return {"status": "success", "result": "Deleted {} objects".format(count)}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _clear_canvas_ui():
     doc = get_active_gh_doc()
@@ -925,7 +926,7 @@ def _clear_canvas_ui():
             return {"status": "success", "result": "Canvas cleared"}
         return {"status": "error", "result": "No active document"}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def _bake_objects_ui(object_ids):
     doc = get_active_gh_doc()
@@ -959,7 +960,7 @@ def _bake_objects_ui(object_ids):
             
         return {"status": "success", "result": {"baked_count": len(baked_ids), "ids": baked_ids}}
     except Exception as e:
-        return {"status": "error", "result": str(e)}
+        return {"status": "error", "result": unicode(e)}
 
 def get_gh_canvas_stats():
     doc = get_active_gh_doc()
@@ -1008,7 +1009,7 @@ def process_command(cmd):
             try:
                 res_container["val"] = func(*args, **kwargs)
             except Exception as e:
-                res_container["val"] = {"status": "error", "result": str(e)}
+                res_container["val"] = {"status": "error", "result": unicode(e)}
             finally:
                 evt.set()
                 
@@ -1055,7 +1056,7 @@ def process_command(cmd):
             exec(cmd.get("code", ""), globals(), loc)
             return {"status": "success", "result": str(loc.get("result", "Executed"))}
         except Exception as e:
-            return {"status": "error", "result": str(e)}
+            return {"status": "error", "result": unicode(e)}
 
     # --- New Commands ---
     elif ctype == "create_component":
@@ -1127,8 +1128,9 @@ def _try_kill_zombie_server():
         s.connect((HOST, PORT))
         
         body = json.dumps({"type": "get_server_status"})
-        req = "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}".format(len(body), body)
-        s.sendall(req.encode())
+        body_bytes = body.encode('utf-8')
+        req = "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n".format(len(body_bytes))
+        s.sendall(req.encode('utf-8') + body_bytes)
         
         # Read response
         data = b""
@@ -1139,7 +1141,7 @@ def _try_kill_zombie_server():
             if b"\r\n\r\n" in data:
                 head, body_part = data.split(b"\r\n\r\n", 1)
                 cl = 0
-                for line in head.decode().split("\r\n"):
+                for line in head.decode('utf-8').split("\r\n"):
                     if "content-length:" in line.lower():
                         cl = int(line.lower().split(":")[1].strip())
                 while len(body_part) < cl:
@@ -1148,7 +1150,7 @@ def _try_kill_zombie_server():
                 break
         
         try:
-            res = json.loads(data.decode())
+            res = json.loads(data.decode('utf-8'))
         except:
             return 0
 
@@ -1159,8 +1161,9 @@ def _try_kill_zombie_server():
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((HOST, PORT))
             body = json.dumps({"type": "stop_server"})
-            req = "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}".format(len(body), body)
-            s.sendall(req.encode())
+            body_bytes = body.encode('utf-8')
+            req = "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n".format(len(body_bytes))
+            s.sendall(req.encode('utf-8') + body_bytes)
             s.close()
             return 1
         else:
@@ -1282,7 +1285,7 @@ def server_loop():
                             data += chunk
                             if b"\r\n\r\n" in data: # Header end
                                 head, body_rest = data.split(b"\r\n\r\n", 1)
-                                headers = head.decode().lower()
+                                headers = head.decode('utf-8').lower()
                                 clen = 0
                                 for line in headers.split("\r\n"):
                                     if "content-length:" in line:
@@ -1300,18 +1303,22 @@ def server_loop():
                              continue
 
                         try:
-                            cmd = json.loads(data.decode())
+                            cmd = json.loads(data.decode('utf-8'))
                             res = process_command(cmd)
                         except Exception as process_err:
-                            res = {"status": "error", "result": "Internal error in process_command: " + str(process_err)}
-                            Rhino.RhinoApp.WriteLine("[MCP] Error in process_command: " + str(process_err))
+                            res = {"status": "error", "result": "Internal error in process_command: " + unicode(process_err)}
+                            Rhino.RhinoApp.WriteLine("[MCP] Error in process_command: " + unicode(process_err))
                         
                         try:
-                            res_json = json.dumps(res, cls=GHEncoder)
-                            http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
-                            conn.sendall(http.encode())
+                            res_json = json.dumps(res, cls=GHEncoder, ensure_ascii=False)
+                            if not isinstance(res_json, unicode):
+                                res_json = unicode(res_json)
+                            res_bytes = res_json.encode('utf-8')
+                            
+                            http_header = u"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n".format(len(res_bytes))
+                            conn.sendall(http_header.encode('utf-8') + res_bytes)
                         except Exception as send_err:
-                            Rhino.RhinoApp.WriteLine("[MCP] Error sending response: " + str(send_err))
+                            Rhino.RhinoApp.WriteLine(u"[MCP] Error sending response: " + unicode(send_err))
                         
                     except Exception as e:
                         Rhino.RhinoApp.WriteLine("[MCP] Error handling req: {}".format(e))

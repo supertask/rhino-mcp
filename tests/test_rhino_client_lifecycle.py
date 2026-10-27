@@ -8,6 +8,7 @@ import time
 import traceback
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -63,21 +64,26 @@ def load_server(idle, logs):
     path = Path(os.environ.get('RHINO_BRIDGE_TEST_SOURCE', str(Path(__file__).resolve().parents[1] / 'rhino_scripts' / 'rhino_mcp_bridge.py')))
     module = ast.parse(path.read_text(encoding='utf-8'))
     server_class = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == 'RhinoMCPServer')
+    rhino = types.SimpleNamespace(RhinoApp=types.SimpleNamespace(Idle=idle),
+                                  RhinoDoc=types.SimpleNamespace(ActiveDoc=object()))
     namespace = {'socket': socket, 'threading': threading, 'json': json,
-                 'traceback': traceback, 'time': time,
-                 'Rhino': types.SimpleNamespace(RhinoApp=types.SimpleNamespace(Idle=idle)),
+                 'traceback': traceback, 'time': time, 'unicode': str,
+                 'Rhino': rhino,
                  'log_message': logs.append}
     exec(compile(ast.Module(body=[server_class], type_ignores=[]), str(path), 'exec'), namespace)
     server = namespace['RhinoMCPServer']()
     server.running = True
     server.execute_command = lambda command: {'status': 'success'}
-    return server
+    return server, rhino
 
 
 class RhinoClientLifecycleTests(unittest.TestCase):
     def run_worker(self, fail_send, recv_error=None, expect_error=False):
         idle, logs, client = IdleEvent(), [], FakeClient(fail_send, recv_error)
-        server = load_server(idle, logs)
+        server, rhino = load_server(idle, logs)
+        modules = patch.dict('sys.modules', {'Rhino': rhino, 'scriptcontext': types.SimpleNamespace()})
+        modules.start()
+        self.addCleanup(modules.stop)
         worker = threading.Thread(target=server._handle_client, args=(client,), daemon=True)
         worker.start()
         self.assertTrue(idle.ready.wait(1), 'worker did not schedule Rhino idle callback')

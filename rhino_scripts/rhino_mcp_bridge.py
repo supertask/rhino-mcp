@@ -128,7 +128,7 @@ def log_message(message):
                 message = message.encode('utf-8')
             f.write("[{0}] {1}\n".format(timestamp, message))
     except Exception as e:
-        Rhino.RhinoApp.WriteLine("Failed to write to log file: {0}".format(str(e)))
+        Rhino.RhinoApp.WriteLine("Failed to write to log file: {0}".format(unicode(e)))
 
 class RhinoMCPServer:
     def __init__(self, host='localhost', port=9876):
@@ -211,7 +211,7 @@ class RhinoMCPServer:
             
             log_message(get_message('server_started', self.host, self.port))
         except Exception as e:
-            log_message(get_message('start_failed', str(e)))
+            log_message(get_message('start_failed', unicode(e)))
             self.stop()
             
     def _force_kill_port_holder(self):
@@ -308,7 +308,7 @@ class RhinoMCPServer:
                 return 2
                 
         except Exception as e:
-            # log_message("Could not contact existing server: {0}".format(str(e)))
+            # log_message("Could not contact existing server: {0}".format(unicode(e)))
             return 0
             
     def stop(self):
@@ -351,12 +351,18 @@ class RhinoMCPServer:
                 
             except Exception as e:
                 if self.running:
-                    log_message("[Rhino MCP] Error accepting connection: {0}".format(str(e)))
+                    log_message("[Rhino MCP] Error accepting connection: {0}".format(unicode(e)))
                     time.sleep(0.5)
     
     def _handle_client(self, client):
         """Handle a client connection"""
         try:
+            # Ensure scriptcontext.doc is set to Rhino document
+            # This is critical if the script is run in a context where sc.doc might be pointing to Grasshopper
+            import scriptcontext as sc
+            import Rhino
+            sc.doc = Rhino.RhinoDoc.ActiveDoc
+
             # Set socket buffer size
             client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 14485760)  # 10MB
             client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 14485760)  # 10MB
@@ -373,7 +379,7 @@ class RhinoMCPServer:
                     if error_code is None and e.args:
                         error_code = e.args[0]
                     if error_code in (10022, 10053, 10054):
-                        log_message("[Rhino MCP] Client disconnected during receive: {0}".format(str(e)))
+                        log_message(u"[Rhino MCP] Client disconnected during receive: {0}".format(unicode(e)))
                         break
                     raise
                 if not data:
@@ -385,29 +391,37 @@ class RhinoMCPServer:
                     cmd_type = command.get("type", "unknown")
                     # ステータス確認などの頻繁なログは抑制
                     if cmd_type != "get_server_status":
-                        log_message("[Rhino MCP] コマンド受信: {0}".format(cmd_type))
+                        log_message(u"[Rhino MCP] コマンド受信: {0}".format(cmd_type))
                     
                     # Create a closure to capture the client connection
                     def execute_wrapper():
                         try:
+                            # Re-ensure sc.doc in the wrapper which might run on Idle or UI thread
+                            import scriptcontext as sc
+                            import Rhino
+                            sc.doc = Rhino.RhinoDoc.ActiveDoc
+
                             response = self.execute_command(command)
                         except Exception as e:
-                            log_message("[Rhino MCP] Error executing command: {0}".format(str(e)))
+                            log_message(u"[Rhino MCP] Error executing command: {0}".format(unicode(e)))
                             traceback.print_exc()
                             response = {
                                 "status": "error",
-                                "message": str(e)
+                                "message": unicode(e)
                             }
                         try:
-                            response_bytes = json.dumps(response).encode('utf-8')
+                            response_json = json.dumps(response, ensure_ascii=False)
+                            if not isinstance(response_json, unicode):
+                                response_json = unicode(response_json)
+                            response_bytes = response_json.encode('utf-8')
                             chunk_size = 14485760
                             for i in range(0, len(response_bytes), chunk_size):
                                 client.sendall(response_bytes[i:i + chunk_size])
                         except socket.error as e:
-                            log_message("[Rhino MCP] Could not send response; closing client connection: {0}".format(str(e)))
+                            log_message(u"[Rhino MCP] Could not send response; closing client connection: {0}".format(unicode(e)))
                             return False
                         except Exception as e:
-                            log_message("[Rhino MCP] Error preparing response: {0}".format(str(e)))
+                            log_message(u"[Rhino MCP] Error preparing response: {0}".format(unicode(e)))
                             traceback.print_exc()
                             return False
                         return True  # Signal connection should stay open
@@ -435,7 +449,7 @@ class RhinoMCPServer:
                     
                 except ValueError as e:
                     # Handle JSON decode error (IronPython 2.7)
-                    log_message("Invalid JSON received: {0}".format(str(e)))
+                    log_message("Invalid JSON received: {0}".format(unicode(e)))
                     error_response = {
                         "status": "error",
                         "message": "Invalid JSON format"
@@ -446,7 +460,7 @@ class RhinoMCPServer:
                         break  # Close connection on send error
                 
         except Exception as e:
-            log_message("Error handling client: {0}".format(str(e)))
+            log_message("Error handling client: {0}".format(unicode(e)))
             traceback.print_exc()
         finally:
             try:
@@ -505,9 +519,9 @@ class RhinoMCPServer:
                 return {"status": "error", "message": "Unknown command type"}
                 
         except Exception as e:
-            log_message("Error executing command: {0}".format(str(e)))
+            log_message("Error executing command: {0}".format(unicode(e)))
             traceback.print_exc()
-            return {"status": "error", "message": str(e)}
+            return {"status": "error", "message": unicode(e)}
     
     def _get_scene_info(self, params=None):
         """Get simplified scene information focusing on layers and example objects"""
@@ -542,7 +556,7 @@ class RhinoMCPServer:
                         }
                         example_objects.append(obj_info)
                     except Exception as e:
-                        log_message("Error processing object: {0}".format(str(e)))
+                        log_message("Error processing object: {0}".format(unicode(e)))
                         continue
                 
                 layer_info = {
@@ -563,10 +577,10 @@ class RhinoMCPServer:
             return response
             
         except Exception as e:
-            log_message("Error getting simplified scene info: {0}".format(str(e)))
+            log_message("Error getting simplified scene info: {0}".format(unicode(e)))
             return {
                 "status": "error",
-                "message": str(e),
+                "message": unicode(e),
                 "layers": []
             }
     
@@ -608,7 +622,7 @@ class RhinoMCPServer:
             
             return {"status": "error", "message": "Failed to create cube"}
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return {"status": "error", "message": unicode(e)}
     
     def _get_layers(self):
         """Get information about all layers"""
@@ -630,7 +644,7 @@ class RhinoMCPServer:
                 "layers": layers
             }
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return {"status": "error", "message": unicode(e)}
     
     def _execute_code(self, params):
         """Execute arbitrary Python code"""
@@ -665,7 +679,7 @@ class RhinoMCPServer:
                 hint = "Did you use f-string formatting? You have to use IronPython here that doesn't support this."
                 error_response = {
                     "status": "error",
-                    "message": "{0} {1}".format(hint, str(e)),
+                    "message": "{0} {1}".format(hint, unicode(e)),
                 }
                 log_message("Error: {0}".format(error_response))
                 return error_response
@@ -674,7 +688,7 @@ class RhinoMCPServer:
             hint = "Did you use f-string formatting? You have to use IronPython here that doesn't support this."
             error_response = {
                 "status": "error",
-                "message": "{0} {1}".format(hint, str(e)),
+                "message": "{0} {1}".format(hint, unicode(e)),
             }
             log_message("System error: {0}".format(error_response))
             return error_response
@@ -729,8 +743,8 @@ class RhinoMCPServer:
                 
             return {"status": "success"}
         except Exception as e:
-            log_message("Error adding metadata: " + str(e))
-            return {"status": "error", "message": str(e)}
+            log_message("Error adding metadata: " + unicode(e))
+            return {"status": "error", "message": unicode(e)}
 
     def _get_objects_with_metadata(self, params):
         """Get objects with their metadata, with optional filtering"""
@@ -830,10 +844,10 @@ class RhinoMCPServer:
             }
             
         except Exception as e:
-            log_message("Error filtering objects: " + str(e))
+            log_message("Error filtering objects: " + unicode(e))
             return {
                 "status": "error",
-                "message": str(e),
+                "message": unicode(e),
                 "available_fields": all_fields
             }
 
@@ -929,7 +943,7 @@ class RhinoMCPServer:
                                 rs.ViewCameraTarget(None, new_loc, target)
                                 rs.ViewCameraUp(None, Rhino.Geometry.Vector3d.ZAxis)
                             except Exception as e:
-                                log_message("Error setting perspective camera: " + str(e))
+                                log_message("Error setting perspective camera: " + unicode(e))
                             
                             # Disable standard zoom extents as we handled it
                             should_zoom_extents = False 
@@ -945,7 +959,7 @@ class RhinoMCPServer:
                                 rs.ViewCameraUp(None, cam_up)
                                 
                             except Exception as e:
-                                 log_message("Error setting camera: " + str(e))
+                                 log_message("Error setting camera: " + unicode(e))
                              
                     else:
                         log_message("Warning: View '{0}' not found. Using active view.".format(view_name))
@@ -1102,10 +1116,10 @@ class RhinoMCPServer:
             }
             
         except Exception as e:
-            log_message("Error capturing viewport: " + str(e))
+            log_message("Error capturing viewport: " + unicode(e))
             return {
                 "type": "error",
-                "message": "Error capturing viewport: " + str(e)
+                "message": "Error capturing viewport: " + unicode(e)
             }
             
         finally:

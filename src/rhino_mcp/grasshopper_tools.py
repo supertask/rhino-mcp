@@ -1088,6 +1088,78 @@ class GrasshopperTools:
                 "instance_guid": instance_guid,
                 "value": value
             })
+            
+            # Check if the server reported "not supported" type error
+            # If so, try the fallback script for ValueList and Boolean types
+            if result.get("status") == "error" and "Setting value not supported" in result.get("result", ""):
+                logger.info(f"Standard set failed for {instance_guid}, attempting fallback script for complex types")
+                
+                # Prepare Python bool string
+                bool_str = "True" if str(value).lower() == "true" else "False"
+                val_str = str(value)
+                
+                # IronPython 2.7 compatible script
+                code = """
+import System
+import Grasshopper
+from Grasshopper.Kernel.Special import GH_ValueList, GH_BooleanToggle
+from Grasshopper.Kernel.Parameters import Param_Boolean
+from Grasshopper.Kernel.Types import GH_Boolean
+
+# Try to get the document safely
+doc = None
+try:
+    if 'ghenv' in globals():
+        doc = ghenv.Component.OnPingDocument()
+    else:
+        # Fallback to active canvas document
+        doc = Grasshopper.Instances.ActiveCanvas.Document
+except:
+    doc = Grasshopper.Instances.ActiveCanvas.Document
+
+guid = System.Guid("%s")
+obj = doc.FindObject(guid, False)
+
+result = "Object not found"
+if obj:
+    if type(obj).__name__ == "GH_ValueList":
+        target_name = "%s"
+        found = False
+        for item in obj.ListItems:
+            if str(item.Name) == target_name:
+                item.Selected = True
+                found = True
+            else:
+                item.Selected = False
+        if found:
+            obj.ExpireSolution(True)
+            result = "ValueList updated to " + target_name
+        else:
+            result = "Value " + target_name + " not found in list"
+
+    elif type(obj).__name__ == "GH_BooleanToggle":
+        target_val = %s
+        obj.Value = target_val
+        obj.ExpireSolution(True)
+        result = "BooleanToggle updated"
+
+    elif type(obj).__name__ == "Param_Boolean":
+        obj.PersistentData.Clear()
+        target_val = %s
+        obj.PersistentData.Append(GH_Boolean(target_val))
+        obj.ExpireSolution(True)
+        result = "Param_Boolean updated"
+        
+    else:
+        result = "Error: Setting value still not supported for this type: " + str(type(obj))
+""" % (instance_guid, val_str, bool_str, bool_str)
+
+                # Execute fallback
+                res_fallback = connection.send_command("execute_code", {"code": code})
+                if res_fallback.get("status") == "error":
+                     return f"Error (Fallback): {res_fallback.get('result')}"
+                return res_fallback.get("result", "Value set via fallback")
+
             if result.get("status") == "error":
                 return f"Error: {result.get('result', 'Unknown error')}"
             return result.get("result", "Value set")
