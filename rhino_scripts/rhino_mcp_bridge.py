@@ -503,7 +503,15 @@ class RhinoMCPServer:
         try:
             command_type = command.get("type")
             params = command.get("params", {})
-            
+
+            # GhPython components switch the shared scriptcontext.doc to the
+            # Grasshopper document whenever they solve; Rhino commands must
+            # work on the Rhino document (otherwise rs.Add* fails)
+            if command_type not in self.WORKER_THREAD_COMMANDS:
+                active_doc = Rhino.RhinoDoc.ActiveDoc
+                if active_doc is not None:
+                    sc.doc = active_doc
+
             if command_type == "get_server_status":
                 is_headless = False
                 try:

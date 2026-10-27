@@ -48,9 +48,38 @@ class GetLayersTests(BridgeCommandTestCase):
                          [("Default", 1), (u"塔の家", 2), (u"空のレイヤー", 0)])
 
     def test_dispatch_through_execute_command(self):
-        self.bridge.sc.doc = types.SimpleNamespace(Layers=[layer(0, "Default")], Objects=[])
+        # execute_command works on Rhino's active document
+        self.bridge.Rhino.RhinoDoc.ActiveDoc = types.SimpleNamespace(Layers=[layer(0, "Default")], Objects=[])
         res = self.server.execute_command({"type": "get_layers"})
         self.assertEqual(res["layers"][0]["object_count"], 0)
+
+
+class ScriptContextDocTests(BridgeCommandTestCase):
+    """GhPython switches the shared scriptcontext.doc to the Grasshopper document."""
+
+    def test_commands_run_on_the_rhino_document(self):
+        rhino_doc = types.SimpleNamespace(Layers=[layer(0, "Default")], Objects=[rhino_object(0, "a")])
+        self.bridge.Rhino.RhinoDoc.ActiveDoc = rhino_doc
+        self.bridge.sc.doc = "GrasshopperDocument"   # left behind by a GhPython solve
+        res = self.server.execute_command({"type": "get_layers"})
+        self.assertEqual(res["status"], "success", res)
+        self.assertIs(self.bridge.sc.doc, rhino_doc)
+        self.assertEqual(res["layers"][0]["object_count"], 1)
+
+    def test_execute_code_sees_the_rhino_document(self):
+        rhino_doc = types.SimpleNamespace(Name="rhino")
+        self.bridge.Rhino.RhinoDoc.ActiveDoc = rhino_doc
+        self.bridge.sc.doc = "GrasshopperDocument"
+        # Code runs with the bridge's globals, where `sc` is scriptcontext
+        res = self.server.execute_command({"type": "execute_code", "params": {"code": "result = sc.doc.Name"}})
+        self.assertEqual(res["status"], "success", res)
+        self.assertEqual(res["result"], "rhino")
+
+    def test_status_command_does_not_touch_the_document(self):
+        self.bridge.Rhino.RhinoDoc.ActiveDoc = types.SimpleNamespace()
+        self.bridge.sc.doc = "GrasshopperDocument"
+        self.server.execute_command({"type": "get_server_status"})
+        self.assertEqual(self.bridge.sc.doc, "GrasshopperDocument")
 
 
 class CaptureLabelTests(BridgeCommandTestCase):
