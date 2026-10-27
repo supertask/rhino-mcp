@@ -263,8 +263,13 @@ def check_tools(conn):
     judge(u"get_scene_info（日本語のレイヤー名がそのまま読める）", LAYER in out and "\\u30" not in out)
 
     out = tools.get_layers(None)
-    judge(u"get_layers", not out.startswith("Error"), u"（{0}）".format(out[:80]),
-          known_issue="ObjectCount" in out)
+    try:
+        layer_counts = dict((l["name"], l["object_count"]) for l in json.loads(out)["layers"])
+    except ValueError:
+        layer_counts = {}
+    expected = count_objects(conn)
+    judge(u"get_layers（日本語のレイヤーのオブジェクト数が合う）", layer_counts.get(LAYER) == expected,
+          u"（{0} 個 / 実際 {1} 個）".format(layer_counts.get(LAYER), expected) if layer_counts else u"（{0}）".format(out[:80]))
 
     out = json.loads(tools.get_scene_objects_with_metadata(None, filters={"name": u"確認用*"}))
     meta = out["objects"][0].get("metadata", {}) if out.get("objects") else {}

@@ -37,10 +37,6 @@ Enter を押すたびに 1 項目ずつ進みます。止めずに最後まで�
 
 結果は「✔ 合格 / ✖ 不合格 / △ 既知の問題」で表示されます。終了コードは、不合格がなければ 0、あれば 1 です。
 
-## 既知の問題
-
-- `get_layers` は Rhino 7.1 で `Layer.ObjectCount` が存在しないためエラーになります（△ と表示されます）。
-
 ## 実行中に表示されるメッセージ
 
 - Rhino を終了させたときにターミナルに出る `Connection lost after sending execute_code; not retrying: timed out` は、Rhino が返事をする前に閉じたためで、問題ではありません。

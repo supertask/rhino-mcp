@@ -659,12 +659,20 @@ class RhinoMCPServer:
         try:
             doc = sc.doc
             layers = []
-            
+
+            # Rhino 7's Layer has no ObjectCount, so count objects per layer once
+            counts = {}
+            for obj in doc.Objects:
+                index = obj.Attributes.LayerIndex
+                counts[index] = counts.get(index, 0) + 1
+
             for layer in doc.Layers:
+                if layer.IsDeleted:
+                    continue
                 layers.append({
                     "id": layer.Index,
                     "name": layer.Name,
-                    "object_count": layer.ObjectCount,
+                    "object_count": counts.get(layer.Index, 0),
                     "is_visible": layer.IsVisible,
                     "is_locked": layer.IsLocked
                 })
@@ -1094,7 +1102,7 @@ class RhinoMCPServer:
                                 rs.SetUserText(obj.Id, "short_id", short_id)
                             
                             name = rs.ObjectName(obj.Id) or "Unnamed"
-                            text = "{0}\\n{1}".format(name, short_id)
+                            text = "{0}\n{1}".format(name, short_id)
                             
                             dot_id = rs.AddTextDot(text, pt)
                             rs.TextDotHeight(dot_id, 8)
