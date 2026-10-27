@@ -9,21 +9,16 @@ Run with:  python -m unittest discover -s tests -v
 Limitation: IronPython-specific socket behaviour (every recv() failure is
 reported as errno 10022) is imitated by FakeClient, not exercised for real.
 """
-import builtins
 import json
 import os
 import shutil
 import socket
-import sys
 import tempfile
 import threading
 import time
-import types
 import unittest
-from unittest import mock
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BRIDGE_PATH = os.path.join(ROOT, "rhino_scripts", "rhino_mcp_bridge.py")
+from helpers import stubs
 
 
 class IdleEvent(object):
@@ -54,17 +49,9 @@ class IdleEvent(object):
 
 
 def load_bridge(log_dir):
-    stub_names = ["System", "System.Drawing", "System.Drawing.Imaging", "System.IO",
-                  "Rhino", "scriptcontext", "rhinoscriptsyntax"]
-    stubs = dict((name, mock.MagicMock(name=name)) for name in stub_names)
-    with open(BRIDGE_PATH, "rb") as f:
-        source = f.read().decode("utf-8")
     # Do not create or start the server at import time
-    source = source.split("\n# Create and start server")[0]
-    module = types.ModuleType("rhino_mcp_bridge_under_test")
-    with mock.patch.dict(sys.modules, stubs):
-        exec(compile(source, BRIDGE_PATH, "exec"), module.__dict__)
-    module.get_log_dir = lambda: log_dir
+    module = stubs.load_bridge("rhino_mcp_bridge.py", log_dir=log_dir,
+                               cut_marker="\n# Create and start server")
     module.Rhino.RhinoApp.Idle = IdleEvent()
     return module
 
@@ -119,8 +106,8 @@ class FakeClient(object):
 
 class BridgeClientTests(unittest.TestCase):
     def setUp(self):
-        self.builtins_patch = mock.patch.object(builtins, "unicode", str, create=True)
-        self.builtins_patch.start()
+        self.builtins_patch = stubs.py2_builtins()
+        self.builtins_patch.__enter__()
         self.log_dir = tempfile.mkdtemp(prefix="rhino_mcp_test_")
         self.bridge = load_bridge(self.log_dir)
         self.server = self.bridge.RhinoMCPServer("127.0.0.1", 0)
@@ -143,7 +130,7 @@ class BridgeClientTests(unittest.TestCase):
         self.ui_running = False
         self.server.running = False
         self.ui_thread.join(1)
-        self.builtins_patch.stop()
+        self.builtins_patch.__exit__(None, None, None)
         shutil.rmtree(self.log_dir, ignore_errors=True)
 
     def _ui_loop(self):
@@ -157,7 +144,7 @@ class BridgeClientTests(unittest.TestCase):
         return worker
 
     def _rhino_lines(self):
-        return [str(c.args[0]) for c in self.bridge.Rhino.RhinoApp.WriteLine.call_args_list]
+        return stubs.rhino_lines(self.bridge)
 
     def _log_text(self):
         path = os.path.join(self.log_dir, "rhino_mcp.log")

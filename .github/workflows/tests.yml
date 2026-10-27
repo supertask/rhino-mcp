@@ -1,0 +1,21 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    # Windows: the bridges and their socket handling target Rhino on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install .
+      - name: Run tests (no Rhino needed)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -v
