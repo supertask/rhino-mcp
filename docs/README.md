@@ -35,7 +35,7 @@ The project follows a standard `src` layout:
 ### Prerequisites
 
 - Rhino 7 or newer
-- Python 3.10 or newer
+- Python 3.10–3.13 (with `uv`, Python 3.12 is installed automatically as set in `.python-version`)
 - `uv` (Recommended) or `pip`
 
 ### Setting up the Python Environment

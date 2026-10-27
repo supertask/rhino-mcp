@@ -220,6 +220,15 @@ class ProcessCommandTests(unittest.TestCase):
         res = self.bridge.process_command({"type": "execute_code", "code": "raise ValueError('bad')"})
         self.assertEqual(res, {"status": "error", "result": "bad"})
 
+    def test_execute_code_functions_see_top_level_names(self):
+        code = (u"N = 12\n"
+                u"def rods():\n"
+                u"    return [i for i in range(N)]\n"
+                u"result = u'本数: {0}'.format(len(rods()))")
+        res = self.bridge.process_command({"type": "execute_code", "code": code})
+        self.assertEqual(res, {"status": "success", "result": u"本数: 12"})
+        self.assertNotIn("N", self.bridge.__dict__)
+
     def test_clear_canvas_requires_confirm(self):
         self.bridge._clear_canvas_ui = lambda: self.ui_calls.append("clear") or {"status": "success"}
         self._ui_thread()

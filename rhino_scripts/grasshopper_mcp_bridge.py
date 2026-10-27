@@ -1071,9 +1071,11 @@ def process_command(cmd):
         
     elif ctype == "execute_code":
         try:
-            loc = {}
-            exec(cmd.get("code", ""), globals(), loc)
-            return {"status": "success", "result": str(loc.get("result", "Executed"))}
+            # One namespace (a copy of the bridge's globals), so functions in the
+            # code can see the code's own top-level names
+            namespace = dict(globals())
+            exec(cmd.get("code", ""), namespace)
+            return {"status": "success", "result": str(namespace.get("result", "Executed"))}
         except Exception as e:
             return {"status": "error", "result": str(e)}
 
