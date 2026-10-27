@@ -75,9 +75,11 @@ def judge(name, ok, detail="", known_issue=False):
 # ------------------------------------------------------------------ Rhino 操作
 
 def rhino_running():
+    # Compare bytes: tasklist prints in the console code page (cp932 on Japanese
+    # Windows), which fails to decode when Python runs in UTF-8 mode
     out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Rhino.exe", "/NH"],
-                         capture_output=True, text=True).stdout
-    return "rhino.exe" in out.lower()
+                         capture_output=True).stdout
+    return b"rhino.exe" in out.lower()
 
 
 def port_open():

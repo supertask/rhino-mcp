@@ -3,8 +3,6 @@
 
 Checks which HTTP request each tool sends and how it turns the reply into
 tool output. A fake Grasshopper bridge is used; Rhino is not needed.
-Tests marked "既知の問題" document current behaviour that should change; they
-are expected failures, so the suite stays green until the code is fixed.
 Run with:  python -m unittest discover -s tests -v
 """
 import json
@@ -216,13 +214,20 @@ class ComponentToolsTests(GrasshopperToolsTestCase):
         self.assertEqual(len(registered), 20)
 
 
-class KnownIssueTests(GrasshopperToolsTestCase):
-    @unittest.expectedFailure
-    def test_known_issue_japanese_is_escaped_in_output(self):
-        """既知の問題: Grasshopper ツールの出力で日本語が \\uXXXX にエスケープされる
-        （Rhino 側ツールは ensure_ascii=False に修正済み）。"""
+class JapaneseAndTimeoutTests(GrasshopperToolsTestCase):
+    def test_japanese_is_readable_in_output(self):
         self.gh.responses["get_context"] = {"status": "success", "result": {"name": JP_LAYER}}
-        self.assertIn(JP_LAYER, self.tools.get_gh_context(None))
+        out = self.tools.get_gh_context(None)
+        self.assertIn(JP_LAYER, out)
+        self.assertNotIn("\\u30", out)
+
+    def test_slow_answer_is_result_unknown_and_not_resent(self):
+        gt._grasshopper_connection.timeout = 0.5
+        self.gh.responses["delete_objects"] = 1.5
+        out = self.tools.delete_objects(None, [GUID])
+        self.assertIn(u"実行されたかは不明", out)
+        self.assertIn(u"自動では再送していません", out)
+        self.assertEqual(self.gh.types(), ["delete_objects"])
 
 
 if __name__ == "__main__":

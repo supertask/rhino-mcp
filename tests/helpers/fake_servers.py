@@ -129,8 +129,9 @@ class FakeRhino(object):
 class FakeGrasshopper(object):
     """A stand-in for grasshopper_mcp_bridge.py (JSON over HTTP POST).
 
-    `responses` maps a command type to either a dict (sent as JSON) or an
-    int HTTP status code. Unlisted commands get {"status": "success", ...}.
+    `responses` maps a command type to a dict (sent as JSON), an int HTTP
+    status code, or a float: seconds to wait before a normal answer.
+    Unlisted commands get {"status": "success", ...}.
     """
 
     def __init__(self):
@@ -143,8 +144,11 @@ class FakeGrasshopper(object):
                 length = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 fake.requests.append(body)
-                response = fake.responses.get(body.get("type"),
-                                              {"status": "success", "result": {"type": body.get("type")}})
+                default = {"status": "success", "result": {"type": body.get("type")}}
+                response = fake.responses.get(body.get("type"), default)
+                if isinstance(response, float):
+                    time.sleep(response)
+                    response = default
                 if isinstance(response, int):
                     self.send_response(response)
                     self.send_header("Content-Length", "0")

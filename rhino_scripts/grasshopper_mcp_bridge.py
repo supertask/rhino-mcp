@@ -37,6 +37,15 @@ PORT = 9999
 SERVER_NAME = "Rhino-Grasshopperアプリ内部 MCPブリッジ・サーバー"
 LANGUAGE = 'ja'  # 'en' for English, 'ja' for Japanese
 
+# UI-thread commands: give up if not started in time, wait longer once started
+# (the MCP side waits 30 seconds for the whole HTTP request)
+UI_START_TIMEOUT = 5.0
+UI_RUN_TIMEOUT = 20.0
+UI_NOT_STARTED_MESSAGE = (u"Rhinoが処理中で、5秒以内にコマンドを開始できなかったため取り消しました。"
+                          u"このコマンドは実行されていません。Rhinoの処理が終わってから再実行してください。")
+UI_RESULT_UNKNOWN_MESSAGE = (u"コマンドは開始されましたが、まだ終わっていません。実行されたかは不明です。"
+                             u"二重実行を防ぐため、Grasshopperの状態を確認してから必要な場合だけ再実行してください。")
+
 MESSAGES = {
     'en': {
         'zombie_killed_socket': "[GH MCP] Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
@@ -1000,24 +1009,44 @@ def process_command(cmd):
     
     # --- Helper to run UI action ---
     def run_ui(func, *args, **kwargs):
+        """Run func on the UI thread and wait for it.
+
+        A command that has not started within UI_START_TIMEOUT is cancelled, so
+        reporting it as "not executed" is true and a retry cannot run it twice.
+        A command that already started is never cancelled; if it is still
+        running after UI_RUN_TIMEOUT its result is reported as unknown.
+        """
         res_container = {}
-        # Wait event for synchronization
-        evt = threading.Event()
-        
+        state = {"value": "pending"}  # pending -> running -> done, or pending -> cancelled
+        lock = threading.Lock()
+        started = threading.Event()
+        finished = threading.Event()
+
         def _action():
+            with lock:
+                if state["value"] == "cancelled":
+                    return
+                state["value"] = "running"
+            started.set()
             try:
                 res_container["val"] = func(*args, **kwargs)
             except Exception as e:
                 res_container["val"] = {"status": "error", "result": str(e)}
             finally:
-                evt.set()
-                
+                state["value"] = "done"
+                finished.set()
+
         Rhino.RhinoApp.InvokeOnUiThread(Action(_action))
-        
-        # Wait for UI thread to complete (timeout 5s)
-        if not evt.wait(5.0):
-             return {"status": "error", "result": "UI action timed out"}
-             
+
+        if not started.wait(UI_START_TIMEOUT):
+            with lock:
+                if state["value"] == "pending":
+                    state["value"] = "cancelled"
+                    return {"status": "error", "result": UI_NOT_STARTED_MESSAGE}
+
+        if not finished.wait(UI_RUN_TIMEOUT):
+            return {"status": "error", "result": UI_RESULT_UNKNOWN_MESSAGE}
+
         return res_container.get("val", {"status": "error", "result": "UI call failed"})
 
     if ctype == "test":
@@ -1276,6 +1305,8 @@ def server_loop():
                     try:
                         conn.settimeout(5.0)
                         data = b""
+                        head = None
+                        complete = False
                         while True:
                             chunk = conn.recv(4096)
                             if not chunk: break
@@ -1288,10 +1319,18 @@ def server_loop():
                                     if "content-length:" in line:
                                         clen = int(line.split(":")[1].strip())
                                 while len(body_rest) < clen:
-                                    body_rest += conn.recv(4096)
+                                    chunk = conn.recv(4096)
+                                    if not chunk: break  # client went away mid-body
+                                    body_rest += chunk
                                 data = body_rest
+                                complete = len(body_rest) >= clen
                                 break
-                        
+
+                        # A connection closed before a full request arrived (for
+                        # example a port check) is not an error; just drop it
+                        if not complete:
+                            continue
+
                         # Handle OPTIONS
                         if "OPTIONS" in str(head):
                              resp = b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Length: 0\r\n\r\n"
@@ -1310,9 +1349,16 @@ def server_loop():
                             res_json = json.dumps(res, cls=GHEncoder)
                             http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
                             conn.sendall(http.encode())
+                        except socket.error:
+                            # The client stopped waiting and closed the connection
+                            pass
                         except Exception as send_err:
                             Rhino.RhinoApp.WriteLine("[MCP] Error sending response: " + str(send_err))
                         
+                    except socket.error:
+                        # The client went away or sent nothing in time (socket.timeout
+                        # is a socket.error); not worth a message on Rhino's command line
+                        pass
                     except Exception as e:
                         Rhino.RhinoApp.WriteLine("[MCP] Error handling req: {}".format(e))
                     finally:

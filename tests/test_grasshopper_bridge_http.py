@@ -5,13 +5,13 @@ The bridge's real server_loop() runs in CPython on an ephemeral port (not
 9999), with Rhino/Grasshopper modules mocked. The parts that talk to the
 Grasshopper API are replaced by fakes; only HTTP handling and the generic
 parts of process_command() are tested.
-Tests marked "既知の問題" document current behaviour that should change.
 Run with:  python -m unittest discover -s tests -v
 
 Limitation: runs on CPython, not IronPython 2.7.
 """
 import json
 import socket
+import struct
 import threading
 import time
 import unittest
@@ -69,6 +69,8 @@ class BridgeServerTestCase(unittest.TestCase):
                 raise RuntimeError("boom")
             if cmd.get("type") == "big":
                 return {"status": "success", "result": "x" * 200000}
+            if cmd.get("type") == "slow":
+                time.sleep(0.8)
             return {"status": "success", "result": u"受信: " + cmd.get("text", "")}
 
         self.bridge.process_command = fake_process_command
@@ -144,15 +146,46 @@ class HttpHandlingTests(BridgeServerTestCase):
         with self.assertRaises(OSError):
             socket.create_connection(("127.0.0.1", self.port), timeout=0.5)
 
-    @unittest.expectedFailure
-    def test_known_issue_empty_connection_prints_error(self):
-        """既知の問題: 何も送らずに閉じた接続（接続確認など）で、
-        Rhino のコマンドラインに「[MCP] Error ...」が表示される。"""
+    def _assert_quiet_and_still_serving(self):
+        time.sleep(0.5)
+        self.assertEqual(self.lines(), [])
+        _, data, _ = http_post(self.port, b'{"type": "echo", "text": "after"}')
+        self.assertEqual(json.loads(data.decode("utf-8"))["result"], u"受信: after")
+
+    def test_empty_connection_is_quiet(self):
+        """何も送らずに閉じた接続（接続確認など）で、画面にエラーを出さない。"""
         http_post(self.port, b'{"type": "echo"}')
         self.bridge.Rhino.RhinoApp.WriteLine.reset_mock()
         socket.create_connection(("127.0.0.1", self.port), timeout=1).close()
-        time.sleep(0.5)
-        self.assertEqual(self.lines(), [])
+        self._assert_quiet_and_still_serving()
+        self.assertEqual([c["type"] for c in self.received], ["echo", "echo"])
+
+    def test_disconnect_in_the_middle_of_the_body(self):
+        """本文の途中で切れても、ブリッジが止まらずコマンドも実行しない。"""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        s.sendall(b"POST / HTTP/1.1\r\nContent-Length: 100\r\n\r\n{\"type\": \"ec")
+        time.sleep(0.2)
+        s.close()
+        self._assert_quiet_and_still_serving()
+        self.assertEqual([c["text"] for c in self.received], ["after"])
+
+    def test_client_gone_before_response_is_quiet(self):
+        """クライアントが待ちきれずに切断し、返事を送れなかった場合も画面に出さない。"""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        body = b'{"type": "slow"}'
+        s.sendall(b"POST / HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body))
+        time.sleep(0.2)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+        time.sleep(1.0)   # the bridge finishes the command and tries to answer
+        self._assert_quiet_and_still_serving()
+
+    def test_reset_connection_is_quiet(self):
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        s.sendall(b"POST / HTTP/1.1\r\nContent-Length: 100\r\n\r\n{")
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+        self._assert_quiet_and_still_serving()
 
 
 class ProcessCommandTests(unittest.TestCase):
@@ -214,16 +247,50 @@ class ProcessCommandTests(unittest.TestCase):
         self.assertEqual(self.bridge.process_command({"type": "delete_objects", "object_ids": ["a"]}),
                          {"status": "error", "result": "ui failed"})
 
-    @unittest.expectedFailure
-    def test_known_issue_ui_timeout_still_runs_the_command(self):
-        """既知の問題: UI スレッドが 5 秒以内に応答しないと「UI action timed out」の
-        エラーを返すが、その後も操作は実行される。エラーと思って再実行すると二重実行になる。"""
+    def _use_short_ui_timeouts(self):
+        self.bridge.UI_START_TIMEOUT = 0.3
+        self.bridge.UI_RUN_TIMEOUT = 0.6
+
+    def test_command_not_started_in_time_is_cancelled(self):
+        """UI スレッドが空かずに始まらなかった操作は取り消され、あとで実行されない。"""
+        self._use_short_ui_timeouts()
         self.bridge._delete_objects_ui = lambda ids: self.ui_calls.append(ids) or {"status": "success"}
-        self._ui_thread(delay=5.5)
+        self._ui_thread(delay=0.6)
         res = self.bridge.process_command({"type": "delete_objects", "object_ids": ["a"]})
-        self.assertEqual(res["result"], "UI action timed out")
+        self.assertEqual(res, {"status": "error", "result": self.bridge.UI_NOT_STARTED_MESSAGE})
+        self.assertIn(u"実行されていません", res["result"])
+        time.sleep(0.8)   # the UI thread becomes free later
+        self.assertEqual(self.ui_calls, [])
+
+    def test_started_command_is_waited_for(self):
+        """始まった操作は、開始の待ち時間を過ぎても最後まで待って結果を返す。"""
+        self._use_short_ui_timeouts()
+
+        def slow_delete(ids):
+            time.sleep(0.4)
+            self.ui_calls.append(ids)
+            return {"status": "success", "result": "deleted"}
+        self.bridge._delete_objects_ui = slow_delete
+        self._ui_thread(delay=0.1)
+        res = self.bridge.process_command({"type": "delete_objects", "object_ids": ["a"]})
+        self.assertEqual(res, {"status": "success", "result": "deleted"})
+        self.assertEqual(self.ui_calls, [["a"]])
+
+    def test_long_running_command_is_result_unknown_and_runs_once(self):
+        """長引いた操作は「結果不明」と返し、操作自体は 1 回だけ実行される。"""
+        self._use_short_ui_timeouts()
+
+        def very_slow_delete(ids):
+            time.sleep(1.0)
+            self.ui_calls.append(ids)
+            return {"status": "success"}
+        self.bridge._delete_objects_ui = very_slow_delete
+        self._ui_thread()
+        res = self.bridge.process_command({"type": "delete_objects", "object_ids": ["a"]})
+        self.assertEqual(res, {"status": "error", "result": self.bridge.UI_RESULT_UNKNOWN_MESSAGE})
+        self.assertIn(u"実行されたかは不明", res["result"])
         time.sleep(1.0)
-        self.assertEqual(self.ui_calls, [], "the command ran after the timeout was reported")
+        self.assertEqual(self.ui_calls, [["a"]])
 
 
 if __name__ == "__main__":
