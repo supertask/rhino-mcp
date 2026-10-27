@@ -379,40 +379,47 @@ class RhinoMCPServer:
                     def execute_wrapper():
                         try:
                             response = self.execute_command(command)
-                            response_json = json.dumps(response)
-                            # Split large responses into chunks if needed
-                            chunk_size = 14485760  # 10MB chunks
-                            response_bytes = response_json.encode('utf-8')
-                            for i in range(0, len(response_bytes), chunk_size):
-                                chunk = response_bytes[i:i + chunk_size]
-                                client.sendall(chunk)
-                            # log_message(get_message('response_sent'))
                         except Exception as e:
                             log_message("[Rhino MCP] Error executing command: {0}".format(str(e)))
                             traceback.print_exc()
-                            error_response = {
+                            response = {
                                 "status": "error",
                                 "message": str(e)
                             }
-                            try:
-                                client.sendall(json.dumps(error_response).encode('utf-8'))
-                            except Exception as e:
-                                log_message("[Rhino MCP] Failed to send error response: {0}".format(str(e)))
-                                return False  # Signal connection should be closed
+                        try:
+                            response_bytes = json.dumps(response).encode('utf-8')
+                            chunk_size = 14485760
+                            for i in range(0, len(response_bytes), chunk_size):
+                                client.sendall(response_bytes[i:i + chunk_size])
+                        except socket.error as e:
+                            log_message("[Rhino MCP] Could not send response; closing client connection: {0}".format(str(e)))
+                            return False
+                        except Exception as e:
+                            log_message("[Rhino MCP] Error preparing response: {0}".format(str(e)))
+                            traceback.print_exc()
+                            return False
                         return True  # Signal connection should stay open
                     
+                    # Keep the socket owned by this worker until the UI thread
+                    # finishes responding. Closing it in the idle handler races
+                    # with the next recv() on this thread (WinError 10022).
+                    response_finished = threading.Event()
+                    response_ok = [False]
+
                     # Use RhinoApp.Idle event for IronPython 2.7 compatibility
                     def idle_handler(sender, e):
-                        if not execute_wrapper():
-                            # If execute_wrapper returns False, close the connection
+                        try:
+                            response_ok[0] = execute_wrapper()
+                        finally:
                             try:
-                                client.close()
-                            except:
-                                pass
-                        # Remove the handler after execution
-                        Rhino.RhinoApp.Idle -= idle_handler
+                                Rhino.RhinoApp.Idle -= idle_handler
+                            finally:
+                                response_finished.set()
                     
                     Rhino.RhinoApp.Idle += idle_handler
+                    response_finished.wait()
+                    if not response_ok[0]:
+                        break
                     
                 except ValueError as e:
                     # Handle JSON decode error (IronPython 2.7)
