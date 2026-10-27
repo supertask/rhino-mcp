@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List, Optional, Union
 import json
 import socket
+import threading
 import time
 import base64
 import io
@@ -20,6 +21,7 @@ class RhinoConnection:
         self.host = host
         self.port = port
         self.socket = None
+        self._command_lock = threading.Lock()
         self.timeout = 30.0  # 30 second timeout
         self.buffer_size = 14485760  # 10MB buffer size for handling large images
     
@@ -47,6 +49,17 @@ class RhinoConnection:
     
     def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Send a command to the Rhino script and wait for response"""
+        # A Rhino restart invalidates a persistent connection. A fresh socket
+        # prevents the next operation from using that stale connection without
+        # ever retrying a command that might already have changed the model.
+        with self._command_lock:
+            self.disconnect()
+            try:
+                return self._send_command_once(command_type, params)
+            finally:
+                self.disconnect()
+
+    def _send_command_once(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         if self.socket is None:
             self.connect()
         
