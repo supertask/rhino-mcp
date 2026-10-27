@@ -701,21 +701,26 @@ class RhinoMCPServer:
             
             log_message("Executing code: {0}".format(code))
             
-            # Create a new scope for code execution
-            local_dict = {}
-            
+            # Run the code in one namespace (a copy of the bridge's globals).
+            # With separate globals and locals, functions defined in the code
+            # could not see the code's own top-level names (NameError).
+            namespace = dict(globals())
+            before = dict(namespace)
+
             try:
                 # Execute the code
-                exec(code, globals(), local_dict)
-                
-                # Get result from local_dict or use a default message
-                result = local_dict.get("result", "Code executed successfully")
+                exec(code, namespace)
+
+                # Get result from the namespace or use a default message
+                result = namespace.get("result", "Code executed successfully")
                 log_message("Code execution completed. Result: {0}".format(result))
-                
+
+                # Report only names the code created or changed
                 response = {
                     "status": "success",
                     "result": str(result),
-                    "variables": {k: str(v) for k, v in local_dict.items() if not k.startswith('__')}
+                    "variables": {k: str(v) for k, v in namespace.items()
+                                  if not k.startswith('__') and (k not in before or before[k] is not v)}
                 }
                 
                 log_message("Sending response: {0}".format(json.dumps(response)))

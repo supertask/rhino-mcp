@@ -82,6 +82,43 @@ class ScriptContextDocTests(BridgeCommandTestCase):
         self.assertEqual(self.bridge.sc.doc, "GrasshopperDocument")
 
 
+class ExecuteCodeScopeTests(BridgeCommandTestCase):
+    """Functions in AI-written code must see the code's own top-level names."""
+
+    CODE = (u"W, D = 7.9, 13.5\n"
+            u"def half(v):\n"
+            u"    return v / 2.0\n"
+            u"def area():\n"
+            u"    return W * D\n"          # uses top-level names
+            u"def summary():\n"
+            u"    return u'{0} / {1}'.format(half(W), area())\n"   # calls another helper
+            u"result = summary()\n")
+
+    def run_code(self, code):
+        return self.server.execute_command({"type": "execute_code", "params": {"code": code}})
+
+    def test_functions_see_top_level_names(self):
+        res = self.run_code(self.CODE)
+        self.assertEqual(res["status"], "success", res)
+        self.assertEqual(res["result"], u"3.95 / 106.65")
+
+    def test_reports_only_new_names_and_keeps_bridge_globals_clean(self):
+        res = self.run_code(self.CODE)
+        self.assertEqual(sorted(res["variables"]), ["D", "W", "area", "half", "result", "summary"])
+        for name in ("W", "area", "result"):
+            self.assertNotIn(name, self.bridge.__dict__)
+
+    def test_runs_are_independent(self):
+        self.run_code(u"leftover = 1\nresult = 'first'")
+        res = self.run_code(u"result = 'leftover' in globals()")
+        self.assertEqual(res["result"], "False")
+
+    def test_errors_are_still_reported(self):
+        res = self.run_code(u"def f():\n    return undefined_name\nresult = f()")
+        self.assertEqual(res["status"], "error")
+        self.assertIn("undefined_name", res["message"])
+
+
 class CaptureLabelTests(BridgeCommandTestCase):
     def test_annotation_label_uses_a_real_line_break(self):
         rs = self.bridge.rs
