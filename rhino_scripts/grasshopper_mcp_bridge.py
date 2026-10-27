@@ -517,13 +517,6 @@ def _update_script_component_on_ui_thread(instance_guid_str, code, description, 
     except Exception as e:
         return {"status": "error", "result": traceback.format_exc()}
 
-def update_script_component(instance_guid, **kwargs):
-    result_holder = {}
-    def ui_action():
-        result_holder["res"] = _update_script_component_on_ui_thread(instance_guid, kwargs.get("code"), kwargs.get("description"), kwargs.get("message_to_user"), kwargs.get("param_definitions"))
-    Rhino.RhinoApp.InvokeOnUiThread(Action(ui_action))
-    return result_holder.get("res", {"status": "error", "result": "UI Action failed"})
-
 def _update_code_ref_ui(instance_guid_str, file_path, param_definitions, description, name, force):
     doc = get_active_gh_doc()
     if not doc: return {"status": "error", "result": "No active doc"}
@@ -615,13 +608,6 @@ def _update_code_ref_ui(instance_guid_str, file_path, param_definitions, descrip
             
     except Exception as e:
         return {"status": "error", "result": str(e)}
-
-def update_script_with_code_reference(instance_guid, **kwargs):
-    result_holder = {}
-    def ui_action():
-        result_holder["res"] = _update_code_ref_ui(instance_guid, kwargs.get("file_path"), kwargs.get("param_definitions"), kwargs.get("description"), kwargs.get("name"), kwargs.get("force_code_reference"))
-    Rhino.RhinoApp.InvokeOnUiThread(Action(ui_action))
-    return result_holder.get("res", {"status": "error", "result": "UI Action failed"})
 
 # --- Extended Tool Helper Functions ---
 
@@ -1073,10 +1059,15 @@ def process_command(cmd):
         return {"status": "success", "result": get_objects_with_context(selected, cmd.get("context_depth", 0), cmd.get("simplified", False))}
         
     elif ctype == "update_script":
-        return update_script_component(**cmd)
-        
+        # Wait for the UI thread like other commands: InvokeOnUiThread does not
+        # wait, so returning right away reported a failure for an update that
+        # was still going to happen
+        return run_ui(_update_script_component_on_ui_thread, cmd.get("instance_guid"), cmd.get("code"),
+                      cmd.get("description"), cmd.get("message_to_user"), cmd.get("param_definitions"))
+
     elif ctype == "update_script_with_code_reference":
-        return update_script_with_code_reference(**cmd)
+        return run_ui(_update_code_ref_ui, cmd.get("instance_guid"), cmd.get("file_path"), cmd.get("param_definitions"),
+                      cmd.get("description"), cmd.get("name"), cmd.get("force_code_reference"))
         
     elif ctype == "execute_code":
         try:

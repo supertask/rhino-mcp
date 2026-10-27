@@ -247,6 +247,47 @@ class ProcessCommandTests(unittest.TestCase):
         self.assertEqual(self.bridge.process_command({"type": "delete_objects", "object_ids": ["a"]}),
                          {"status": "error", "result": "ui failed"})
 
+    def test_update_script_waits_for_the_ui_thread(self):
+        """update_script は UI スレッドで書き換えが終わるのを待ち、本当の結果を返す。"""
+        def update(guid, code, description, message_to_user, param_definitions):
+            time.sleep(0.3)
+            self.ui_calls.append((guid, code, description, message_to_user, param_definitions))
+            return {"status": "success", "result": "Updated successfully"}
+        self.bridge._update_script_component_on_ui_thread = update
+        self._ui_thread(delay=0.1)
+        params = [{"type": "input", "name": "x"}]
+        res = self.bridge.process_command({"type": "update_script", "instance_guid": "g", "code": "result = 1",
+                                           "description": "d", "message_to_user": "m", "param_definitions": params})
+        self.assertEqual(res, {"status": "success", "result": "Updated successfully"})
+        self.assertEqual(self.ui_calls, [("g", "result = 1", "d", "m", params)])
+
+    def test_update_script_error_is_returned(self):
+        self.bridge._update_script_component_on_ui_thread = lambda *a: {"status": "error", "result": "Target not found"}
+        self._ui_thread()
+        res = self.bridge.process_command({"type": "update_script", "instance_guid": "g"})
+        self.assertEqual(res, {"status": "error", "result": "Target not found"})
+
+    def test_update_script_with_code_reference_waits_for_the_ui_thread(self):
+        def update(guid, file_path, param_definitions, description, name, force):
+            time.sleep(0.3)
+            self.ui_calls.append((guid, file_path, name, force))
+            return {"status": "success", "result": "Updated Ref"}
+        self.bridge._update_code_ref_ui = update
+        self._ui_thread(delay=0.1)
+        res = self.bridge.process_command({"type": "update_script_with_code_reference", "instance_guid": "g",
+                                           "file_path": "C:/x.py", "name": "Tool", "force_code_reference": True})
+        self.assertEqual(res, {"status": "success", "result": "Updated Ref"})
+        self.assertEqual(self.ui_calls, [("g", "C:/x.py", "Tool", True)])
+
+    def test_update_script_not_started_in_time_is_cancelled(self):
+        self._use_short_ui_timeouts()
+        self.bridge._update_script_component_on_ui_thread = lambda *a: self.ui_calls.append(a) or {"status": "success"}
+        self._ui_thread(delay=0.6)
+        res = self.bridge.process_command({"type": "update_script", "instance_guid": "g", "code": "x"})
+        self.assertEqual(res["result"], self.bridge.UI_NOT_STARTED_MESSAGE)
+        time.sleep(0.8)
+        self.assertEqual(self.ui_calls, [])
+
     def _use_short_ui_timeouts(self):
         self.bridge.UI_START_TIMEOUT = 0.3
         self.bridge.UI_RUN_TIMEOUT = 0.6
