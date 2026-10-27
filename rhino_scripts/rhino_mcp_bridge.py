@@ -363,7 +363,19 @@ class RhinoMCPServer:
             
             while self.running:
                 # Receive command with larger buffer
-                data = client.recv(14485760)  # 10MB buffer
+                try:
+                    data = client.recv(14485760)  # 10MB buffer
+                except socket.error as e:
+                    # IronPython on Windows can report an abruptly disconnected
+                    # TCP client as WSAEINVAL (10022) instead of returning EOF.
+                    # Other socket failures must still reach the error handler.
+                    error_code = getattr(e, 'errno', None)
+                    if error_code is None and e.args:
+                        error_code = e.args[0]
+                    if error_code in (10022, 10053, 10054):
+                        log_message("[Rhino MCP] Client disconnected during receive: {0}".format(str(e)))
+                        break
+                    raise
                 if not data:
                     # log_message(get_message('client_disconnected'))
                     break

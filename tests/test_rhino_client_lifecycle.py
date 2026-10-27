@@ -30,8 +30,9 @@ class IdleEvent:
 
 
 class FakeClient:
-    def __init__(self, fail_send=False):
+    def __init__(self, fail_send=False, recv_error=None):
         self.fail_send = fail_send
+        self.recv_error = recv_error
         self.recv_calls = 0
         self.closed = False
         self.responses = []
@@ -45,6 +46,8 @@ class FakeClient:
             return b'{"type":"get_server_status"}'
         if self.closed:
             raise socket.error(10022, 'socket no longer connected')
+        if self.recv_error:
+            raise socket.error(self.recv_error, 'test receive failure')
         return b''
 
     def sendall(self, data):
@@ -72,8 +75,8 @@ def load_server(idle, logs):
 
 
 class RhinoClientLifecycleTests(unittest.TestCase):
-    def run_worker(self, fail_send):
-        idle, logs, client = IdleEvent(), [], FakeClient(fail_send)
+    def run_worker(self, fail_send, recv_error=None, expect_error=False):
+        idle, logs, client = IdleEvent(), [], FakeClient(fail_send, recv_error)
         server = load_server(idle, logs)
         worker = threading.Thread(target=server._handle_client, args=(client,), daemon=True)
         worker.start()
@@ -85,7 +88,7 @@ class RhinoClientLifecycleTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertTrue(client.closed)
         self.assertEqual(idle.handlers, [])
-        self.assertFalse(any('Error handling client' in line for line in logs))
+        self.assertEqual(any('Error handling client' in line for line in logs), expect_error)
         return client, logs
 
     def test_disconnected_client_is_closed_by_worker_without_another_recv(self):
@@ -97,6 +100,18 @@ class RhinoClientLifecycleTests(unittest.TestCase):
         client, _ = self.run_worker(fail_send=False)
         self.assertEqual(client.responses, [{'status': 'success'}])
         self.assertEqual(client.recv_calls, 2)
+
+    def test_windows_disconnect_error_during_receive_is_handled(self):
+        for code in (10022, 10053, 10054):
+            with self.subTest(code=code):
+                client, logs = self.run_worker(False, recv_error=code)
+                self.assertEqual(client.recv_calls, 2)
+                self.assertTrue(any('Client disconnected during receive' in line for line in logs))
+
+    def test_unexpected_receive_error_is_reported(self):
+        client, logs = self.run_worker(False, recv_error=10013, expect_error=True)
+        self.assertEqual(client.recv_calls, 2)
+        self.assertTrue(any('10013' in line for line in logs))
 
 
 if __name__ == '__main__':
