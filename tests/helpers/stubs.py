@@ -91,10 +91,11 @@ def py2_builtins():
         yield
 
 
-def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False):
+def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False, keep_force_kill=False):
     """Load rhino_scripts/<filename> with Rhino modules mocked.
 
     cut_marker: source after this line is dropped (used to skip auto-start code).
+    keep_force_kill: keep the real port-holder kill code (only for tests that mock subprocess).
     """
     path = os.path.join(RHINO_SCRIPTS, filename)
     names = RHINO_MODULES + (GRASSHOPPER_MODULES if grasshopper else [])
@@ -115,6 +116,8 @@ def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False):
     # Never write to the user's RhinoMCP log folder
     if log_dir is not None and hasattr(module, "get_log_dir"):
         module.get_log_dir = lambda: log_dir
+    if keep_force_kill:
+        return module
     # Never kill processes or contact a real bridge from a test
     if hasattr(module, "_force_kill_port_holder"):
         module._force_kill_port_holder = lambda: (False, None)

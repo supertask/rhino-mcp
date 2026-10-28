@@ -101,6 +101,20 @@ def get_log_dir():
     
     return log_dir
 
+def listening_pid(netstat_output, port):
+    """PID listening on :<port> in `netstat -ano` output, or None.
+
+    Only LISTENING lines whose local address ends with :<port> count; connections
+    (TIME_WAIT etc.) and other ports such as 19876 are ignored.
+    """
+    if isinstance(netstat_output, bytes):
+        netstat_output = netstat_output.decode('ascii', 'ignore')
+    for line in netstat_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == 'TCP' and parts[1].endswith(':{0}'.format(port)) and parts[3] == 'LISTENING':
+            return parts[-1]
+    return None
+
 def to_json(obj):
     """json.dumps that keeps non-ASCII text as is (encode the result to UTF-8 before sending).
 
@@ -248,17 +262,14 @@ class RhinoMCPServer:
                 return False, None # ポート使用者は見つからなかった
 
             # 行を解析してPIDを取得 (TCP 127.0.0.1:9876 ... LISTENING 1234)
-            lines = stdout.strip().split('\n')
-            target_pid = None
-            for line in lines:
-                parts = line.split()
-                # アドレス部分が :PORT で終わるかチェック
-                if len(parts) > 1 and str(self.port) in parts[1]:
-                    target_pid = parts[-1] # 最後の要素がPID
-                    break
-            
+            target_pid = listening_pid(stdout, self.port)
             if not target_pid:
                 return False, None
+            # Never kill this Rhino itself: right after the server is stopped and the
+            # script is run again, the port can still be busy (this used to close Rhino)
+            if str(target_pid) == str(os.getpid()):
+                log_message("Port {0} is held by this Rhino (PID: {1}). Not killing it.".format(self.port, target_pid))
+                return False, target_pid
 
             # 2. tasklistでプロセス名を確認
             # cmd: tasklist /FI "PID eq 1234" /FO CSV /NH

@@ -1194,6 +1194,16 @@ def _try_kill_zombie_server():
         # Rhino.RhinoApp.WriteLine("[MCP] Zombie check failed: {}".format(e))
         return 0
 
+def listening_pid(netstat_output, port):
+    """PID listening on :<port> in `netstat -ano` output, or None (LISTENING lines only)."""
+    if isinstance(netstat_output, bytes):
+        netstat_output = netstat_output.decode('ascii', 'ignore')
+    for line in netstat_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == 'TCP' and parts[1].endswith(':{0}'.format(port)) and parts[3] == 'LISTENING':
+            return parts[-1]
+    return None
+
 def _force_kill_port_holder():
     """
     Returns: (bool killed, str pid)
@@ -1209,14 +1219,12 @@ def _force_kill_port_holder():
         if not stdout:
             return False, None
 
-        lines = stdout.strip().split('\n')
-        target_pid = None
-        for line in lines:
-            parts = line.split()
-            if len(parts) > 1 and str(PORT) in parts[1]:
-                target_pid = parts[-1]
-                break
-        
+        target_pid = listening_pid(stdout, PORT)
+        # Never kill this Rhino itself
+        if target_pid and str(target_pid) == str(os.getpid()):
+            Rhino.RhinoApp.WriteLine("Port {} is held by this Rhino (PID: {}). Not killing it.".format(PORT, target_pid))
+            return False, target_pid
+
         if not target_pid:
             return False, None
 
