@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List, Optional, Union
 import json
+import select
 import socket
+import threading
 import time
 import base64
 import io
@@ -15,14 +17,38 @@ from PIL import Image as PILImage
 # Configure logging
 logger = logging.getLogger("RhinoTools")
 
+# Commands that never change the Rhino document. Only these are re-sent
+# automatically when the connection breaks after the command was sent.
+READ_ONLY_COMMANDS = frozenset([
+    "get_server_status",
+    "get_scene_info",
+    "get_layers",
+    "get_objects_with_metadata",
+])
+
+
+class RhinoConnectionError(Exception):
+    """The command was not delivered to Rhino (safe to try again)."""
+
+
+class RhinoResultUnknownError(Exception):
+    """The connection broke after the command was sent; Rhino may have run it."""
+
+
+class RhinoCommandError(Exception):
+    """Rhino received the command and reported an error."""
+
+
 class RhinoConnection:
     def __init__(self, host='localhost', port=9876):
         self.host = host
         self.port = port
         self.socket = None
-        self.timeout = 30.0  # 30 second timeout
+        # Building large models (hundreds of pipes) on Rhino's UI thread can take longer than 30 s
+        self.timeout = 120.0
         self.buffer_size = 14485760  # 10MB buffer size for handling large images
-    
+        self._lock = threading.Lock()
+
     def connect(self):
         """Connect to the Rhino script's socket server"""
         if self.socket is None:
@@ -35,7 +61,7 @@ class RhinoConnection:
                 logger.error("Failed to connect to Rhino script: {0}".format(str(e)))
                 self.disconnect()
                 raise
-    
+
     def disconnect(self):
         """Disconnect from the Rhino script"""
         if self.socket:
@@ -44,68 +70,102 @@ class RhinoConnection:
             except:
                 pass
             self.socket = None
-    
-    def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Send a command to the Rhino script and wait for response"""
-        if self.socket is None:
-            self.connect()
-        
+
+    def _is_stale(self) -> bool:
+        """Check, without sending anything, whether the open socket is unusable.
+
+        A connection opened before Rhino was restarted is readable (EOF or a
+        reset) while no command is pending. Any unexpected data also means the
+        stream is out of sync, so the socket must not be reused.
+        """
         try:
-            # Prepare command
-            command = {
-                "type": command_type,
-                "params": params or {}
-            }
-            
-            # Send command
-            command_json = json.dumps(command)
-            logger.info("Sending command: {0}".format(command_json))
+            readable, _, _ = select.select([self.socket], [], [], 0)
+            if not readable:
+                return False
+            self.socket.recv(1, socket.MSG_PEEK)
+            return True
+        except (OSError, ValueError):
+            return True
+
+    def _ensure_connected(self):
+        """Make sure a usable socket exists. Nothing is sent to Rhino here."""
+        if self.socket is not None and self._is_stale():
+            logger.info("Existing connection to Rhino is no longer valid; reconnecting")
+            self.disconnect()
+        if self.socket is None:
+            try:
+                self.connect()
+            except OSError as e:
+                raise RhinoConnectionError(
+                    "Rhinoに接続できません（{0}:{1}）。Rhinoが起動していて rhino_mcp_bridge.py が実行されているか確認してください。詳細: {2}".format(
+                        self.host, self.port, e)) from e
+
+    def _receive_response(self) -> Dict[str, Any]:
+        """Read one JSON response. Raises OSError / socket.timeout on connection problems."""
+        buffer = b''
+        deadline = time.time() + self.timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise socket.timeout("Response timeout after {0} seconds".format(self.timeout))
+            self.socket.settimeout(remaining)
+            data = self.socket.recv(self.buffer_size)
+            if not data:
+                raise ConnectionAbortedError("Connection closed by Rhino script")
+            buffer += data
+            logger.debug("Received {0} bytes of data".format(len(data)))
+            try:
+                # ValueError covers both incomplete JSON and a split UTF-8 sequence
+                return json.loads(buffer.decode('utf-8'))
+            except ValueError:
+                continue
+
+    def _send_command_once(self, command_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_connected()
+
+        command_json = json.dumps({
+            "type": command_type,
+            "params": params or {}
+        })
+        logger.info("Sending command: {0}".format(command_json))
+        try:
+            self.socket.settimeout(self.timeout)
             self.socket.sendall(command_json.encode('utf-8'))
-            
-            # Receive response with timeout and larger buffer
-            buffer = b''
-            start_time = time.time()
-            
-            while True:
-                try:
-                    # Check timeout
-                    if time.time() - start_time > self.timeout:
-                        raise Exception("Response timeout after {0} seconds".format(self.timeout))
-                    
-                    # Receive data
-                    data = self.socket.recv(self.buffer_size)
-                    if not data:
-                        break
-                        
-                    buffer += data
-                    logger.debug("Received {0} bytes of data".format(len(data)))
-                    
-                    # Try to parse JSON
-                    try:
-                        response = json.loads(buffer.decode('utf-8'))
-                        logger.info("Received complete response: {0}".format(response))
-                        
-                        # Check for error response
-                        if response.get("status") == "error":
-                            raise Exception(response.get("message", "Unknown error from Rhino"))
-                            
-                        return response
-                    except json.JSONDecodeError:
-                        # If we have a complete response, it should be valid JSON
-                        if len(buffer) > 0:
-                            continue
-                        else:
-                            raise Exception("Invalid JSON response from Rhino")
-                            
-                except socket.timeout:
-                    raise Exception("Socket timeout while receiving response")
-                    
-            raise Exception("Connection closed by Rhino script")
-            
-        except Exception as e:
-            logger.error("Error communicating with Rhino script: {0}".format(str(e)))
-            self.disconnect()  # Disconnect on error to force reconnection
-            raise
+            response = self._receive_response()
+        except (OSError, ValueError) as e:
+            # The stream can no longer be trusted (a late response would be
+            # read as the answer to the next command), so always drop it.
+            self.disconnect()
+            raise RhinoResultUnknownError(str(e)) from e
+
+        logger.info("Received complete response: {0}".format(response))
+        if isinstance(response, dict) and response.get("status") == "error":
+            raise RhinoCommandError(response.get("message", "Unknown error from Rhino"))
+        return response
+
+    def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Send a command to the Rhino script and wait for response.
+
+        A command is re-sent automatically only when it is read-only. For
+        commands that may change the model, a broken connection after sending
+        is reported as "result unknown" so the command is never run twice.
+        """
+        with self._lock:
+            try:
+                return self._send_command_once(command_type, params)
+            except RhinoResultUnknownError as e:
+                if command_type not in READ_ONLY_COMMANDS:
+                    logger.error("Connection lost after sending {0}; not retrying: {1}".format(command_type, e))
+                    raise RhinoResultUnknownError(
+                        "Rhinoとの通信が処理の途中で切れました（{0}）。コマンド「{1}」がRhinoで実行されたかは不明です。"
+                        "二重実行を防ぐため自動では再送していません。シーンの状態を確認してから、必要な場合だけ再実行してください。".format(
+                            e, command_type)) from e
+                logger.warning("Connection lost during read-only command {0}; retrying once: {1}".format(command_type, e))
+            try:
+                return self._send_command_once(command_type, params)
+            except RhinoResultUnknownError as e:
+                raise RhinoResultUnknownError(
+                    "Rhinoとの通信に再接続後も失敗しました（{0}）。Rhinoの状態を確認してください。".format(e)) from e
 
 # Global connection instance
 _rhino_connection = None
@@ -146,7 +206,7 @@ class RhinoTools:
         try:
             connection = get_rhino_connection()
             result = connection.send_command("get_scene_info")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error("Error getting scene info from Rhino: {0}".format(str(e)))
             return "Error getting scene info: {0}".format(str(e))
@@ -156,7 +216,7 @@ class RhinoTools:
         try:
             connection = get_rhino_connection()
             result = connection.send_command("get_layers")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error("Error getting layers from Rhino: {0}".format(str(e)))
             return "Error getting layers: {0}".format(str(e))
@@ -196,7 +256,7 @@ class RhinoTools:
                 "filters": filters or {},
                 "metadata_fields": metadata_fields
             })
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error("Error getting objects with metadata: {0}".format(str(e)))
             return "Error getting objects with metadata: {0}".format(str(e))

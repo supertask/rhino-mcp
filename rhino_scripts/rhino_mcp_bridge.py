@@ -46,7 +46,8 @@ MESSAGES = {
         'scene_info_start': "[Rhino MCP] Getting simplified scene info...",
         'scene_info_success': "[Rhino MCP] Simplified scene info collected successfully",
         'script_loaded': "[Rhino MCP] RhinoMCP script loaded. Server started automatically.",
-        'stop_instruction': "[Rhino MCP] To stop the server, run: stop_server()"
+        'stop_instruction': "[Rhino MCP] To stop the server, run: stop_server()",
+        'response_not_delivered': "[Rhino MCP] Command '{0}' was executed in Rhino, but the client had already disconnected, so the result could not be returned."
     },
     'ja': {
         'zombie_killed_socket': u"[Rhino MCP] ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
@@ -62,7 +63,8 @@ MESSAGES = {
         'scene_info_start': u"[Rhino MCP] シーン情報を取得中...",
         'scene_info_success': u"[Rhino MCP] シーン情報の取得に成功しました",
         'script_loaded': u"[Rhino MCP] RhinoMCPスクリプトが読み込まれました。サーバーは自動的に起動しました。",
-        'stop_instruction': u"[Rhino MCP] サーバーを停止するには、次を実行してください: stop_server()"
+        'stop_instruction': u"[Rhino MCP] サーバーを停止するには、次を実行してください: stop_server()",
+        'response_not_delivered': u"[Rhino MCP] コマンド「{0}」はRhinoで実行されましたが、クライアントが切断済みのため結果を返せませんでした。"
     }
 }
 
@@ -99,11 +101,37 @@ def get_log_dir():
     
     return log_dir
 
-def log_message(message):
+def listening_pid(netstat_output, port):
+    """PID listening on :<port> in `netstat -ano` output, or None.
+
+    Only LISTENING lines whose local address ends with :<port> count; connections
+    (TIME_WAIT etc.) and other ports such as 19876 are ignored.
+    """
+    if isinstance(netstat_output, bytes):
+        netstat_output = netstat_output.decode('ascii', 'ignore')
+    for line in netstat_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == 'TCP' and parts[1].endswith(':{0}'.format(port)) and parts[3] == 'LISTENING':
+            return parts[-1]
+    return None
+
+def to_json(obj):
+    """json.dumps that keeps non-ASCII text as is (encode the result to UTF-8 before sending).
+
+    With the default ensure_ascii=True, IronPython 2.7's json tries to decode any text
+    containing characters 0x80-0xFF (such as the multiplication sign or the degree sign)
+    as UTF-8 bytes and fails, so a successful command came back as an error.
+    """
+    return json.dumps(obj, ensure_ascii=False)
+
+
+def log_message(message, show_in_rhino=True):
     """Log a message to both Rhino's command line and log file"""
     # Print to Rhino's command line
-    Rhino.RhinoApp.WriteLine(message)
-    
+    # (show_in_rhino=False is used for expected events such as a client disconnect)
+    if show_in_rhino:
+        Rhino.RhinoApp.WriteLine(message)
+
     # Log to file
     try:
         log_dir = get_log_dir()
@@ -234,17 +262,14 @@ class RhinoMCPServer:
                 return False, None # ポート使用者は見つからなかった
 
             # 行を解析してPIDを取得 (TCP 127.0.0.1:9876 ... LISTENING 1234)
-            lines = stdout.strip().split('\n')
-            target_pid = None
-            for line in lines:
-                parts = line.split()
-                # アドレス部分が :PORT で終わるかチェック
-                if len(parts) > 1 and str(self.port) in parts[1]:
-                    target_pid = parts[-1] # 最後の要素がPID
-                    break
-            
+            target_pid = listening_pid(stdout, self.port)
             if not target_pid:
                 return False, None
+            # Never kill this Rhino itself: right after the server is stopped and the
+            # script is run again, the port can still be busy (this used to close Rhino)
+            if str(target_pid) == str(os.getpid()):
+                log_message("Port {0} is held by this Rhino (PID: {1}). Not killing it.".format(self.port, target_pid))
+                return False, target_pid
 
             # 2. tasklistでプロセス名を確認
             # cmd: tasklist /FI "PID eq 1234" /FO CSV /NH
@@ -354,78 +379,137 @@ class RhinoMCPServer:
                     log_message("[Rhino MCP] Error accepting connection: {0}".format(str(e)))
                     time.sleep(0.5)
     
+    # Commands larger than this are rejected (guards against unbounded buffering)
+    MAX_COMMAND_BYTES = 64 * 1024 * 1024
+
+    # Commands that do not touch the document and can run on the worker thread
+    WORKER_THREAD_COMMANDS = ("get_server_status", "stop_server")
+
+    def _receive_command(self, client):
+        """Read one JSON command from the client.
+
+        Returns the decoded command, or None when the client closed the connection.
+        TCP may deliver a large command in several pieces, so data is accumulated
+        until it parses as JSON.
+        """
+        buffer = b''
+        while self.running:
+            data = client.recv(14485760)  # 10MB buffer
+            if not data:
+                return None
+            buffer += data
+            try:
+                return json.loads(buffer.decode('utf-8'))
+            except ValueError:
+                # Incomplete JSON (or a partial UTF-8 sequence): wait for the rest
+                if len(buffer) > self.MAX_COMMAND_BYTES:
+                    raise ValueError("Command is too large or is not valid JSON")
+        return None
+
+    def _run_on_ui_thread(self, command):
+        """Execute a command on Rhino's UI thread and wait for the result.
+
+        Returns the response, or None if the server stopped before the command ran.
+        """
+        finished = threading.Event()
+        result = [None]
+
+        # Use RhinoApp.Idle event for IronPython 2.7 compatibility
+        def idle_handler(sender, e):
+            # Unsubscribe first so the command can never run twice
+            Rhino.RhinoApp.Idle -= idle_handler
+            try:
+                result[0] = self.execute_command(command)
+            except Exception as ex:
+                log_message("[Rhino MCP] Error executing command: {0}".format(str(ex)))
+                traceback.print_exc()
+                result[0] = {"status": "error", "message": str(ex)}
+            finally:
+                finished.set()
+
+        Rhino.RhinoApp.Idle += idle_handler
+        while not finished.wait(0.5):
+            if not self.running:
+                try:
+                    Rhino.RhinoApp.Idle -= idle_handler
+                except:
+                    pass
+                return None
+        return result[0]
+
+    def _send_response(self, client, response):
+        """Send a response. socket.error is left to the caller."""
+        try:
+            response_bytes = to_json(response).encode('utf-8')
+        except Exception as e:
+            log_message("[Rhino MCP] Error preparing response: {0}".format(str(e)))
+            response_bytes = to_json({
+                "status": "error",
+                "message": "Error preparing response: {0}".format(str(e))
+            }).encode('utf-8')
+        # Split large responses into chunks if needed
+        chunk_size = 14485760  # 10MB chunks
+        for i in range(0, len(response_bytes), chunk_size):
+            client.sendall(response_bytes[i:i + chunk_size])
+
     def _handle_client(self, client):
-        """Handle a client connection"""
+        """Handle a client connection.
+
+        Only this worker thread touches `client`: the UI thread executes the
+        command and hands back the result, and the worker waits for it before
+        the next recv(). Previously the UI thread closed the socket after a
+        failed send while this thread was blocked in recv(), which raised
+        [Errno 10022] (IronPython reports every recv() failure as 10022).
+        """
         try:
             # Set socket buffer size
             client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 14485760)  # 10MB
             client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 14485760)  # 10MB
-            
+
             while self.running:
-                # Receive command with larger buffer
-                data = client.recv(14485760)  # 10MB buffer
-                if not data:
-                    # log_message(get_message('client_disconnected'))
-                    break
-                    
                 try:
-                    command = json.loads(data.decode('utf-8'))
+                    command = self._receive_command(client)
+                except socket.error as e:
+                    # The client went away (reset/aborted). Expected when Codex
+                    # restarts its MCP server, so keep it out of the command line.
+                    log_message(u"[Rhino MCP] Client connection closed while waiting for a command: {0}".format(e), show_in_rhino=False)
+                    break
+                except ValueError as e:
+                    log_message("Invalid JSON received: {0}".format(str(e)))
+                    try:
+                        self._send_response(client, {"status": "error", "message": "Invalid JSON format"})
+                    except socket.error:
+                        pass
+                    break
+
+                if command is None:
+                    break
+
+                if not isinstance(command, dict):
+                    response = {"status": "error", "message": "Command must be a JSON object"}
+                    cmd_type = "unknown"
+                else:
                     cmd_type = command.get("type", "unknown")
                     # ステータス確認などの頻繁なログは抑制
                     if cmd_type != "get_server_status":
-                        log_message("[Rhino MCP] コマンド受信: {0}".format(cmd_type))
-                    
-                    # Create a closure to capture the client connection
-                    def execute_wrapper():
-                        try:
-                            response = self.execute_command(command)
-                            response_json = json.dumps(response)
-                            # Split large responses into chunks if needed
-                            chunk_size = 14485760  # 10MB chunks
-                            response_bytes = response_json.encode('utf-8')
-                            for i in range(0, len(response_bytes), chunk_size):
-                                chunk = response_bytes[i:i + chunk_size]
-                                client.sendall(chunk)
-                            # log_message(get_message('response_sent'))
-                        except Exception as e:
-                            log_message("[Rhino MCP] Error executing command: {0}".format(str(e)))
-                            traceback.print_exc()
-                            error_response = {
-                                "status": "error",
-                                "message": str(e)
-                            }
-                            try:
-                                client.sendall(json.dumps(error_response).encode('utf-8'))
-                            except Exception as e:
-                                log_message("[Rhino MCP] Failed to send error response: {0}".format(str(e)))
-                                return False  # Signal connection should be closed
-                        return True  # Signal connection should stay open
-                    
-                    # Use RhinoApp.Idle event for IronPython 2.7 compatibility
-                    def idle_handler(sender, e):
-                        if not execute_wrapper():
-                            # If execute_wrapper returns False, close the connection
-                            try:
-                                client.close()
-                            except:
-                                pass
-                        # Remove the handler after execution
-                        Rhino.RhinoApp.Idle -= idle_handler
-                    
-                    Rhino.RhinoApp.Idle += idle_handler
-                    
-                except ValueError as e:
-                    # Handle JSON decode error (IronPython 2.7)
-                    log_message("Invalid JSON received: {0}".format(str(e)))
-                    error_response = {
-                        "status": "error",
-                        "message": "Invalid JSON format"
-                    }
-                    try:
-                        client.sendall(json.dumps(error_response).encode('utf-8'))
-                    except:
-                        break  # Close connection on send error
-                
+                        log_message(u"[Rhino MCP] コマンド受信: {0}".format(cmd_type))
+
+                    if cmd_type in self.WORKER_THREAD_COMMANDS:
+                        response = self.execute_command(command)
+                    else:
+                        response = self._run_on_ui_thread(command)
+                        if response is None:
+                            break  # Server is stopping
+
+                try:
+                    self._send_response(client, response)
+                except socket.error as e:
+                    # The command already ran; tell the user once so the
+                    # result is not mistaken for a command that never ran.
+                    log_message(get_message('response_not_delivered', cmd_type))
+                    log_message(u"[Rhino MCP] Send error: {0}".format(e), show_in_rhino=False)
+                    break
+
         except Exception as e:
             log_message("Error handling client: {0}".format(str(e)))
             traceback.print_exc()
@@ -440,7 +524,15 @@ class RhinoMCPServer:
         try:
             command_type = command.get("type")
             params = command.get("params", {})
-            
+
+            # GhPython components switch the shared scriptcontext.doc to the
+            # Grasshopper document whenever they solve; Rhino commands must
+            # work on the Rhino document (otherwise rs.Add* fails)
+            if command_type not in self.WORKER_THREAD_COMMANDS:
+                active_doc = Rhino.RhinoDoc.ActiveDoc
+                if active_doc is not None:
+                    sc.doc = active_doc
+
             if command_type == "get_server_status":
                 is_headless = False
                 try:
@@ -596,12 +688,20 @@ class RhinoMCPServer:
         try:
             doc = sc.doc
             layers = []
-            
+
+            # Rhino 7's Layer has no ObjectCount, so count objects per layer once
+            counts = {}
+            for obj in doc.Objects:
+                index = obj.Attributes.LayerIndex
+                counts[index] = counts.get(index, 0) + 1
+
             for layer in doc.Layers:
+                if layer.IsDeleted:
+                    continue
                 layers.append({
                     "id": layer.Index,
                     "name": layer.Name,
-                    "object_count": layer.ObjectCount,
+                    "object_count": counts.get(layer.Index, 0),
                     "is_visible": layer.IsVisible,
                     "is_locked": layer.IsLocked
                 })
@@ -622,24 +722,29 @@ class RhinoMCPServer:
             
             log_message("Executing code: {0}".format(code))
             
-            # Create a new scope for code execution
-            local_dict = {}
-            
+            # Run the code in one namespace (a copy of the bridge's globals).
+            # With separate globals and locals, functions defined in the code
+            # could not see the code's own top-level names (NameError).
+            namespace = dict(globals())
+            before = dict(namespace)
+
             try:
                 # Execute the code
-                exec(code, globals(), local_dict)
-                
-                # Get result from local_dict or use a default message
-                result = local_dict.get("result", "Code executed successfully")
+                exec(code, namespace)
+
+                # Get result from the namespace or use a default message
+                result = namespace.get("result", "Code executed successfully")
                 log_message("Code execution completed. Result: {0}".format(result))
-                
+
+                # Report only names the code created or changed
                 response = {
                     "status": "success",
                     "result": str(result),
-                    "variables": {k: str(v) for k, v in local_dict.items() if not k.startswith('__')}
+                    "variables": {k: str(v) for k, v in namespace.items()
+                                  if not k.startswith('__') and (k not in before or before[k] is not v)}
                 }
                 
-                log_message("Sending response: {0}".format(json.dumps(response)))
+                log_message("Sending response: {0}".format(to_json(response)))
                 return response
                 
             except Exception as e:
@@ -1031,7 +1136,7 @@ class RhinoMCPServer:
                                 rs.SetUserText(obj.Id, "short_id", short_id)
                             
                             name = rs.ObjectName(obj.Id) or "Unnamed"
-                            text = "{0}\\n{1}".format(name, short_id)
+                            text = "{0}\n{1}".format(name, short_id)
                             
                             dot_id = rs.AddTextDot(text, pt)
                             rs.TextDotHeight(dot_id, 8)

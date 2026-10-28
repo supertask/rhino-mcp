@@ -37,6 +37,15 @@ PORT = 9999
 SERVER_NAME = "Rhino-Grasshopperアプリ内部 MCPブリッジ・サーバー"
 LANGUAGE = 'ja'  # 'en' for English, 'ja' for Japanese
 
+# UI-thread commands: give up if not started in time, wait longer once started
+# (the MCP side waits 30 seconds for the whole HTTP request)
+UI_START_TIMEOUT = 5.0
+UI_RUN_TIMEOUT = 20.0
+UI_NOT_STARTED_MESSAGE = (u"Rhinoが処理中で、5秒以内にコマンドを開始できなかったため取り消しました。"
+                          u"このコマンドは実行されていません。Rhinoの処理が終わってから再実行してください。")
+UI_RESULT_UNKNOWN_MESSAGE = (u"コマンドは開始されましたが、まだ終わっていません。実行されたかは不明です。"
+                             u"二重実行を防ぐため、Grasshopperの状態を確認してから必要な場合だけ再実行してください。")
+
 MESSAGES = {
     'en': {
         'zombie_killed_socket': "[GH MCP] Detected zombie process (Headless Server) on port {0}. Stopped it successfully. Retrying bind...",
@@ -508,13 +517,6 @@ def _update_script_component_on_ui_thread(instance_guid_str, code, description, 
     except Exception as e:
         return {"status": "error", "result": traceback.format_exc()}
 
-def update_script_component(instance_guid, **kwargs):
-    result_holder = {}
-    def ui_action():
-        result_holder["res"] = _update_script_component_on_ui_thread(instance_guid, kwargs.get("code"), kwargs.get("description"), kwargs.get("message_to_user"), kwargs.get("param_definitions"))
-    Rhino.RhinoApp.InvokeOnUiThread(Action(ui_action))
-    return result_holder.get("res", {"status": "error", "result": "UI Action failed"})
-
 def _update_code_ref_ui(instance_guid_str, file_path, param_definitions, description, name, force):
     doc = get_active_gh_doc()
     if not doc: return {"status": "error", "result": "No active doc"}
@@ -606,13 +608,6 @@ def _update_code_ref_ui(instance_guid_str, file_path, param_definitions, descrip
             
     except Exception as e:
         return {"status": "error", "result": str(e)}
-
-def update_script_with_code_reference(instance_guid, **kwargs):
-    result_holder = {}
-    def ui_action():
-        result_holder["res"] = _update_code_ref_ui(instance_guid, kwargs.get("file_path"), kwargs.get("param_definitions"), kwargs.get("description"), kwargs.get("name"), kwargs.get("force_code_reference"))
-    Rhino.RhinoApp.InvokeOnUiThread(Action(ui_action))
-    return result_holder.get("res", {"status": "error", "result": "UI Action failed"})
 
 # --- Extended Tool Helper Functions ---
 
@@ -1000,24 +995,44 @@ def process_command(cmd):
     
     # --- Helper to run UI action ---
     def run_ui(func, *args, **kwargs):
+        """Run func on the UI thread and wait for it.
+
+        A command that has not started within UI_START_TIMEOUT is cancelled, so
+        reporting it as "not executed" is true and a retry cannot run it twice.
+        A command that already started is never cancelled; if it is still
+        running after UI_RUN_TIMEOUT its result is reported as unknown.
+        """
         res_container = {}
-        # Wait event for synchronization
-        evt = threading.Event()
-        
+        state = {"value": "pending"}  # pending -> running -> done, or pending -> cancelled
+        lock = threading.Lock()
+        started = threading.Event()
+        finished = threading.Event()
+
         def _action():
+            with lock:
+                if state["value"] == "cancelled":
+                    return
+                state["value"] = "running"
+            started.set()
             try:
                 res_container["val"] = func(*args, **kwargs)
             except Exception as e:
                 res_container["val"] = {"status": "error", "result": str(e)}
             finally:
-                evt.set()
-                
+                state["value"] = "done"
+                finished.set()
+
         Rhino.RhinoApp.InvokeOnUiThread(Action(_action))
-        
-        # Wait for UI thread to complete (timeout 5s)
-        if not evt.wait(5.0):
-             return {"status": "error", "result": "UI action timed out"}
-             
+
+        if not started.wait(UI_START_TIMEOUT):
+            with lock:
+                if state["value"] == "pending":
+                    state["value"] = "cancelled"
+                    return {"status": "error", "result": UI_NOT_STARTED_MESSAGE}
+
+        if not finished.wait(UI_RUN_TIMEOUT):
+            return {"status": "error", "result": UI_RESULT_UNKNOWN_MESSAGE}
+
         return res_container.get("val", {"status": "error", "result": "UI call failed"})
 
     if ctype == "test":
@@ -1044,16 +1059,23 @@ def process_command(cmd):
         return {"status": "success", "result": get_objects_with_context(selected, cmd.get("context_depth", 0), cmd.get("simplified", False))}
         
     elif ctype == "update_script":
-        return update_script_component(**cmd)
-        
+        # Wait for the UI thread like other commands: InvokeOnUiThread does not
+        # wait, so returning right away reported a failure for an update that
+        # was still going to happen
+        return run_ui(_update_script_component_on_ui_thread, cmd.get("instance_guid"), cmd.get("code"),
+                      cmd.get("description"), cmd.get("message_to_user"), cmd.get("param_definitions"))
+
     elif ctype == "update_script_with_code_reference":
-        return update_script_with_code_reference(**cmd)
+        return run_ui(_update_code_ref_ui, cmd.get("instance_guid"), cmd.get("file_path"), cmd.get("param_definitions"),
+                      cmd.get("description"), cmd.get("name"), cmd.get("force_code_reference"))
         
     elif ctype == "execute_code":
         try:
-            loc = {}
-            exec(cmd.get("code", ""), globals(), loc)
-            return {"status": "success", "result": str(loc.get("result", "Executed"))}
+            # One namespace (a copy of the bridge's globals), so functions in the
+            # code can see the code's own top-level names
+            namespace = dict(globals())
+            exec(cmd.get("code", ""), namespace)
+            return {"status": "success", "result": str(namespace.get("result", "Executed"))}
         except Exception as e:
             return {"status": "error", "result": str(e)}
 
@@ -1172,6 +1194,16 @@ def _try_kill_zombie_server():
         # Rhino.RhinoApp.WriteLine("[MCP] Zombie check failed: {}".format(e))
         return 0
 
+def listening_pid(netstat_output, port):
+    """PID listening on :<port> in `netstat -ano` output, or None (LISTENING lines only)."""
+    if isinstance(netstat_output, bytes):
+        netstat_output = netstat_output.decode('ascii', 'ignore')
+    for line in netstat_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == 'TCP' and parts[1].endswith(':{0}'.format(port)) and parts[3] == 'LISTENING':
+            return parts[-1]
+    return None
+
 def _force_kill_port_holder():
     """
     Returns: (bool killed, str pid)
@@ -1187,14 +1219,12 @@ def _force_kill_port_holder():
         if not stdout:
             return False, None
 
-        lines = stdout.strip().split('\n')
-        target_pid = None
-        for line in lines:
-            parts = line.split()
-            if len(parts) > 1 and str(PORT) in parts[1]:
-                target_pid = parts[-1]
-                break
-        
+        target_pid = listening_pid(stdout, PORT)
+        # Never kill this Rhino itself
+        if target_pid and str(target_pid) == str(os.getpid()):
+            Rhino.RhinoApp.WriteLine("Port {} is held by this Rhino (PID: {}). Not killing it.".format(PORT, target_pid))
+            return False, target_pid
+
         if not target_pid:
             return False, None
 
@@ -1276,6 +1306,8 @@ def server_loop():
                     try:
                         conn.settimeout(5.0)
                         data = b""
+                        head = None
+                        complete = False
                         while True:
                             chunk = conn.recv(4096)
                             if not chunk: break
@@ -1288,10 +1320,18 @@ def server_loop():
                                     if "content-length:" in line:
                                         clen = int(line.split(":")[1].strip())
                                 while len(body_rest) < clen:
-                                    body_rest += conn.recv(4096)
+                                    chunk = conn.recv(4096)
+                                    if not chunk: break  # client went away mid-body
+                                    body_rest += chunk
                                 data = body_rest
+                                complete = len(body_rest) >= clen
                                 break
-                        
+
+                        # A connection closed before a full request arrived (for
+                        # example a port check) is not an error; just drop it
+                        if not complete:
+                            continue
+
                         # Handle OPTIONS
                         if "OPTIONS" in str(head):
                              resp = b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Length: 0\r\n\r\n"
@@ -1307,12 +1347,21 @@ def server_loop():
                             Rhino.RhinoApp.WriteLine("[MCP] Error in process_command: " + str(process_err))
                         
                         try:
-                            res_json = json.dumps(res, cls=GHEncoder)
-                            http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
-                            conn.sendall(http.encode())
+                            # ensure_ascii=False: with the default, IronPython's json fails on text
+                            # with characters 0x80-0xFF (such as the multiplication or degree sign)
+                            res_bytes = json.dumps(res, cls=GHEncoder, ensure_ascii=False).encode('utf-8')
+                            head = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n".format(len(res_bytes))
+                            conn.sendall(head.encode('ascii') + res_bytes)
+                        except socket.error:
+                            # The client stopped waiting and closed the connection
+                            pass
                         except Exception as send_err:
                             Rhino.RhinoApp.WriteLine("[MCP] Error sending response: " + str(send_err))
                         
+                    except socket.error:
+                        # The client went away or sent nothing in time (socket.timeout
+                        # is a socket.error); not worth a message on Rhino's command line
+                        pass
                     except Exception as e:
                         Rhino.RhinoApp.WriteLine("[MCP] Error handling req: {}".format(e))
                     finally:
