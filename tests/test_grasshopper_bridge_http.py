@@ -107,6 +107,16 @@ class HttpHandlingTests(BridgeServerTestCase):
         self.assertEqual(json.loads(data.decode("utf-8"))["result"], u"受信: 日本語")
         self.assertEqual(self.received[0]["text"], u"日本語")
 
+    def test_response_with_symbols_under_ironpython_json(self):
+        # IronPython's json fails on the multiplication / degree sign unless ensure_ascii=False
+        self.bridge.json = stubs.ironpython_json()
+        text = u"17.7m×5.9m 205°"
+        body = json.dumps({"type": "echo", "text": text}, ensure_ascii=False).encode("utf-8")
+        head, data, length = http_post(self.port, body)
+        self.assertIn("200 OK", head)
+        self.assertEqual(len(data), length)           # Content-Length counts bytes, not characters
+        self.assertEqual(json.loads(data.decode("utf-8"))["result"], u"受信: " + text)
+
     def test_body_split_across_packets(self):
         body = json.dumps({"type": "echo", "text": u"分割" * 3000}, ensure_ascii=False).encode("utf-8")
         head, data, _ = http_post(self.port, body, chunks=5)

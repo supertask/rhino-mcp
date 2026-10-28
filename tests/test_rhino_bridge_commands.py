@@ -5,10 +5,13 @@ The bridge is loaded in CPython with Rhino modules mocked; the document is a
 small fake shaped like Rhino 7's (for example, Layer has no ObjectCount).
 Run with:  python -m unittest discover -s tests -v
 """
+import json
+import os
 import shutil
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 from helpers import stubs
 
@@ -117,6 +120,89 @@ class ExecuteCodeScopeTests(BridgeCommandTestCase):
         res = self.run_code(u"def f():\n    return undefined_name\nresult = f()")
         self.assertEqual(res["status"], "error")
         self.assertIn("undefined_name", res["message"])
+
+
+class NonAsciiResponseTests(BridgeCommandTestCase):
+    """Results with symbols such as the multiplication or degree sign (IronPython's json)."""
+
+    TEXT = u"光の教会：17.7m×5.9m、方位 205°"
+
+    def setUp(self):
+        super(NonAsciiResponseTests, self).setUp()
+        self.bridge.json = stubs.ironpython_json()
+
+    def send(self, response):
+        client = types.SimpleNamespace(sent=[])
+        client.sendall = client.sent.append
+        self.server._send_response(client, response)
+        return json.loads(b"".join(client.sent).decode("utf-8"))
+
+    def test_execute_code_with_symbols_succeeds(self):
+        code = u"x = u'17×5'\nresult = u'" + self.TEXT + u"'"
+        res = self.server.execute_command({"type": "execute_code", "params": {"code": code}})
+        self.assertEqual(res["status"], "success", res)
+        self.assertEqual(res["result"], self.TEXT)
+
+    def test_response_with_symbols_is_sent_as_utf8(self):
+        sent = self.send({"status": "success", "result": self.TEXT, "variables": {"x": u"17×5"}})
+        self.assertEqual(sent["result"], self.TEXT)
+        self.assertEqual(sent["variables"]["x"], u"17×5")
+
+
+NETSTAT = ("  TCP    127.0.0.1:9876         0.0.0.0:0              LISTENING       {pid}\r\n"
+           "  TCP    127.0.0.1:9876         127.0.0.1:50123        TIME_WAIT       0\r\n"
+           "  TCP    127.0.0.1:19876        0.0.0.0:0              LISTENING       777\r\n")
+
+
+class PortHolderTests(unittest.TestCase):
+    """Running the bridge script while the port is busy must never close this Rhino."""
+
+    def setUp(self):
+        self.builtins_patch = stubs.py2_builtins()
+        self.builtins_patch.__enter__()
+        self.log_dir = tempfile.mkdtemp(prefix="rhino_mcp_test_")
+        self.rhino = stubs.load_bridge("rhino_mcp_bridge.py", log_dir=self.log_dir,
+                                       cut_marker="\n# Create and start server", keep_force_kill=True)
+        self.gh = stubs.load_bridge("grasshopper_mcp_bridge.py", grasshopper=True, keep_force_kill=True)
+
+    def tearDown(self):
+        self.builtins_patch.__exit__(None, None, None)
+        shutil.rmtree(self.log_dir, ignore_errors=True)
+
+    def test_listening_pid_ignores_connections_and_other_ports(self):
+        for bridge in (self.rhino, self.gh):
+            out = NETSTAT.replace("{pid}", "4321")
+            self.assertEqual(bridge.listening_pid(out, 9876), "4321")
+            self.assertEqual(bridge.listening_pid(out, 19876), "777")
+            self.assertIsNone(bridge.listening_pid("  TCP  127.0.0.1:9876  127.0.0.1:5  TIME_WAIT  0\r\n", 9876))
+
+    def kill_with_netstat(self, bridge, call_kill, pid):
+        popen = mock.MagicMock()
+        popen.return_value.communicate.side_effect = [
+            (NETSTAT.replace("{pid}", str(pid)), ""),  # IronPython returns str
+            ('"Rhino.exe","%d","Console","1","150,000 K"' % pid, ""),
+        ]
+        with mock.patch.object(bridge.platform, "system", return_value="Windows"), \
+             mock.patch.object(bridge.subprocess, "Popen", popen), \
+             mock.patch.object(bridge.subprocess, "call") as call:
+            killed, _ = call_kill()
+        return killed, call
+
+    def test_never_kills_this_rhino(self):
+        me = os.getpid()
+        server = self.rhino.RhinoMCPServer("127.0.0.1", 9876)
+        for bridge, call_kill in ((self.rhino, server._force_kill_port_holder),
+                                  (self.gh, self.gh._force_kill_port_holder)):
+            killed, call = self.kill_with_netstat(bridge, call_kill, me)
+            self.assertFalse(killed)
+            call.assert_not_called()
+
+    def test_still_kills_another_rhino(self):
+        server = self.rhino.RhinoMCPServer("127.0.0.1", 9876)
+        other = os.getpid() + 100000
+        killed, call = self.kill_with_netstat(self.rhino, server._force_kill_port_holder, other)
+        self.assertTrue(killed)
+        self.assertIn(str(other), call.call_args[0][0])
 
 
 class CaptureLabelTests(BridgeCommandTestCase):

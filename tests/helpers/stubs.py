@@ -91,10 +91,11 @@ def py2_builtins():
         yield
 
 
-def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False):
+def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False, keep_force_kill=False):
     """Load rhino_scripts/<filename> with Rhino modules mocked.
 
     cut_marker: source after this line is dropped (used to skip auto-start code).
+    keep_force_kill: keep the real port-holder kill code (only for tests that mock subprocess).
     """
     path = os.path.join(RHINO_SCRIPTS, filename)
     names = RHINO_MODULES + (GRASSHOPPER_MODULES if grasshopper else [])
@@ -115,6 +116,8 @@ def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False):
     # Never write to the user's RhinoMCP log folder
     if log_dir is not None and hasattr(module, "get_log_dir"):
         module.get_log_dir = lambda: log_dir
+    if keep_force_kill:
+        return module
     # Never kill processes or contact a real bridge from a test
     if hasattr(module, "_force_kill_port_holder"):
         module._force_kill_port_holder = lambda: (False, None)
@@ -125,6 +128,25 @@ def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False):
         server_class._force_kill_port_holder = lambda self: (False, None)
         server_class._try_kill_zombie_server = lambda self: 0
     return module
+
+
+def ironpython_json():
+    """A `json` module that fails like IronPython 2.7's on text with characters 0x80-0xFF.
+
+    With ensure_ascii=True (the default), IronPython's json treats such text as UTF-8
+    bytes and decodes it, which fails for the multiplication sign, the degree sign and
+    so on (and for any text mixing them with Japanese). Patch it over a bridge's `json`.
+    """
+    import json as real
+
+    def dumps(obj, *args, **kwargs):
+        if kwargs.get("ensure_ascii", True):
+            text = real.dumps(obj, ensure_ascii=False, cls=kwargs.get("cls"))
+            if any(0x80 <= ord(ch) <= 0xFF for ch in text):
+                raise UnicodeDecodeError("unknown", b"\xd7", 0, 1, "emulated IronPython 2.7 json")
+        return real.dumps(obj, *args, **kwargs)
+
+    return types.SimpleNamespace(dumps=dumps, loads=real.loads, JSONEncoder=real.JSONEncoder)
 
 
 def rhino_lines(module):
