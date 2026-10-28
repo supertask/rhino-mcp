@@ -101,6 +101,16 @@ def get_log_dir():
     
     return log_dir
 
+def to_json(obj):
+    """json.dumps that keeps non-ASCII text as is (encode the result to UTF-8 before sending).
+
+    With the default ensure_ascii=True, IronPython 2.7's json tries to decode any text
+    containing characters 0x80-0xFF (such as the multiplication sign or the degree sign)
+    as UTF-8 bytes and fails, so a successful command came back as an error.
+    """
+    return json.dumps(obj, ensure_ascii=False)
+
+
 def log_message(message, show_in_rhino=True):
     """Log a message to both Rhino's command line and log file"""
     # Print to Rhino's command line
@@ -419,10 +429,10 @@ class RhinoMCPServer:
     def _send_response(self, client, response):
         """Send a response. socket.error is left to the caller."""
         try:
-            response_bytes = json.dumps(response).encode('utf-8')
+            response_bytes = to_json(response).encode('utf-8')
         except Exception as e:
             log_message("[Rhino MCP] Error preparing response: {0}".format(str(e)))
-            response_bytes = json.dumps({
+            response_bytes = to_json({
                 "status": "error",
                 "message": "Error preparing response: {0}".format(str(e))
             }).encode('utf-8')
@@ -723,7 +733,7 @@ class RhinoMCPServer:
                                   if not k.startswith('__') and (k not in before or before[k] is not v)}
                 }
                 
-                log_message("Sending response: {0}".format(json.dumps(response)))
+                log_message("Sending response: {0}".format(to_json(response)))
                 return response
                 
             except Exception as e:

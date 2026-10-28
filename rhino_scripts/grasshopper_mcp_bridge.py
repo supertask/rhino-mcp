@@ -1339,9 +1339,11 @@ def server_loop():
                             Rhino.RhinoApp.WriteLine("[MCP] Error in process_command: " + str(process_err))
                         
                         try:
-                            res_json = json.dumps(res, cls=GHEncoder)
-                            http = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}".format(len(res_json), res_json)
-                            conn.sendall(http.encode())
+                            # ensure_ascii=False: with the default, IronPython's json fails on text
+                            # with characters 0x80-0xFF (such as the multiplication or degree sign)
+                            res_bytes = json.dumps(res, cls=GHEncoder, ensure_ascii=False).encode('utf-8')
+                            head = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n".format(len(res_bytes))
+                            conn.sendall(head.encode('ascii') + res_bytes)
                         except socket.error:
                             # The client stopped waiting and closed the connection
                             pass

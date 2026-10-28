@@ -127,6 +127,25 @@ def load_bridge(filename, log_dir=None, cut_marker=None, grasshopper=False):
     return module
 
 
+def ironpython_json():
+    """A `json` module that fails like IronPython 2.7's on text with characters 0x80-0xFF.
+
+    With ensure_ascii=True (the default), IronPython's json treats such text as UTF-8
+    bytes and decodes it, which fails for the multiplication sign, the degree sign and
+    so on (and for any text mixing them with Japanese). Patch it over a bridge's `json`.
+    """
+    import json as real
+
+    def dumps(obj, *args, **kwargs):
+        if kwargs.get("ensure_ascii", True):
+            text = real.dumps(obj, ensure_ascii=False, cls=kwargs.get("cls"))
+            if any(0x80 <= ord(ch) <= 0xFF for ch in text):
+                raise UnicodeDecodeError("unknown", b"\xd7", 0, 1, "emulated IronPython 2.7 json")
+        return real.dumps(obj, *args, **kwargs)
+
+    return types.SimpleNamespace(dumps=dumps, loads=real.loads, JSONEncoder=real.JSONEncoder)
+
+
 def rhino_lines(module):
     """Lines the bridge printed to Rhino's command line."""
     return [str(c.args[0]) for c in module.Rhino.RhinoApp.WriteLine.call_args_list]

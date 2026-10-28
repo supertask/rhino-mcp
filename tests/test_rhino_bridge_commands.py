@@ -5,6 +5,7 @@ The bridge is loaded in CPython with Rhino modules mocked; the document is a
 small fake shaped like Rhino 7's (for example, Layer has no ObjectCount).
 Run with:  python -m unittest discover -s tests -v
 """
+import json
 import shutil
 import tempfile
 import types
@@ -117,6 +118,33 @@ class ExecuteCodeScopeTests(BridgeCommandTestCase):
         res = self.run_code(u"def f():\n    return undefined_name\nresult = f()")
         self.assertEqual(res["status"], "error")
         self.assertIn("undefined_name", res["message"])
+
+
+class NonAsciiResponseTests(BridgeCommandTestCase):
+    """Results with symbols such as the multiplication or degree sign (IronPython's json)."""
+
+    TEXT = u"光の教会：17.7m×5.9m、方位 205°"
+
+    def setUp(self):
+        super(NonAsciiResponseTests, self).setUp()
+        self.bridge.json = stubs.ironpython_json()
+
+    def send(self, response):
+        client = types.SimpleNamespace(sent=[])
+        client.sendall = client.sent.append
+        self.server._send_response(client, response)
+        return json.loads(b"".join(client.sent).decode("utf-8"))
+
+    def test_execute_code_with_symbols_succeeds(self):
+        code = u"x = u'17×5'\nresult = u'" + self.TEXT + u"'"
+        res = self.server.execute_command({"type": "execute_code", "params": {"code": code}})
+        self.assertEqual(res["status"], "success", res)
+        self.assertEqual(res["result"], self.TEXT)
+
+    def test_response_with_symbols_is_sent_as_utf8(self):
+        sent = self.send({"status": "success", "result": self.TEXT, "variables": {"x": u"17×5"}})
+        self.assertEqual(sent["result"], self.TEXT)
+        self.assertEqual(sent["variables"]["x"], u"17×5")
 
 
 class CaptureLabelTests(BridgeCommandTestCase):

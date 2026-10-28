@@ -44,7 +44,8 @@ class RhinoConnection:
         self.host = host
         self.port = port
         self.socket = None
-        self.timeout = 30.0  # 30 second timeout
+        # Building large models (hundreds of pipes) on Rhino's UI thread can take longer than 30 s
+        self.timeout = 120.0
         self.buffer_size = 14485760  # 10MB buffer size for handling large images
         self._lock = threading.Lock()
 
