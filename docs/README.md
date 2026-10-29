@@ -203,6 +203,8 @@ Make sure the **Rhino bridge script** is running in Rhino before attempting to u
   - This happens when it runs inside an AI app. Set `UV_PYTHON_INSTALL_DIR` as described in "Setting up the Python Environment" and run it again.
 - **It stopped connecting after reopening Rhino**:
   - Check that the startup commands from "Automating MCP Bridge Startup on Rhino Launch" are set. Without them, the bridge scripts must be run each time Rhino starts.
+- **AI commands never finish or end with "timed out"**:
+  - While a settings dialog such as Options or Document Properties is open in Rhino, Rhino holds commands from outside until the dialog is closed. Close the dialog and run the command again.
 
 ## License
 
