@@ -34,8 +34,7 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
 
 ### 前提条件
 
-- Rhino 7（最新版に更新済み）または Rhino 8
-  - Rhino 7 の初期の版（7.1 など）は古いため、**Help**（ヘルプ）→ **Check for Updates**（アップデートを確認）で最新版に更新してから使ってください（Rhino 7 の中での更新は無料です）。
+- Rhino 7 以降（Rhino 7 の初期の版 7.1 でも動作を確認しています。更新は必須ではありません）
 - Python 3.10〜3.13（`uv` を使う場合は、`.python-version` に従って Python 3.12 が自動で入ります）
 - `uv` (推奨) または `pip`
 
