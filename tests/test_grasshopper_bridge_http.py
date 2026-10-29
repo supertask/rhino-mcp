@@ -353,5 +353,46 @@ class ProcessCommandTests(unittest.TestCase):
         self.assertEqual(self.ui_calls, [["a"]])
 
 
+class StartServerTests(unittest.TestCase):
+    """Running the bridge script twice (startup command + manual run) must not stop it."""
+
+    def setUp(self):
+        self.builtins_patch = stubs.py2_builtins()
+        self.builtins_patch.__enter__()
+        self.bridge = stubs.load_bridge("grasshopper_mcp_bridge.py", grasshopper=True)
+        self.sticky = self.bridge.sc.sticky
+
+        def fake_loop():
+            while self.sticky["gh_mcp_run_server"]:
+                time.sleep(0.02)
+        self.bridge.server_loop = fake_loop
+
+    def tearDown(self):
+        self.sticky["gh_mcp_run_server"] = False
+        t = self.sticky["gh_mcp_server_thread"]
+        if t is not None:
+            t.join(3)
+        self.builtins_patch.__exit__(None, None, None)
+
+    def test_second_start_keeps_it_running(self):
+        self.assertTrue(self.bridge.start_server())
+        first = self.sticky["gh_mcp_server_thread"]
+        self.assertFalse(self.bridge.start_server())
+        time.sleep(0.1)
+        self.assertTrue(self.sticky["gh_mcp_run_server"])
+        self.assertIs(self.sticky["gh_mcp_server_thread"], first)
+        self.assertTrue(first.is_alive())
+        self.assertIn(self.bridge.get_message('server_already_running'), stubs.rhino_lines(self.bridge))
+
+    def test_stop_then_start_again(self):
+        self.bridge.start_server()
+        first = self.sticky["gh_mcp_server_thread"]
+        self.bridge.stop_server()
+        first.join(3)
+        self.assertFalse(first.is_alive())
+        self.assertTrue(self.bridge.start_server())
+        self.assertTrue(self.sticky["gh_mcp_server_thread"].is_alive())
+
+
 if __name__ == "__main__":
     unittest.main()
