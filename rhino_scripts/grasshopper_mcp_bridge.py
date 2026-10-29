@@ -57,7 +57,8 @@ MESSAGES = {
         'check_other_instance': "[GH MCP] Please check if another Rhino instance is running.",
         'server_started': "[GH MCP] Rhino-Grasshopper Internal MCP Bridge started on {0}:{1}",
         'start_failed': "[GH MCP] Failed to start server: {0}",
-        'server_stopped': "[GH MCP] Rhino-Grasshopper Internal MCP Bridge Stopped"
+        'server_stopped': "[GH MCP] Rhino-Grasshopper Internal MCP Bridge Stopped",
+        'stop_instruction': "[GH MCP] To stop the server, run grasshopper_mcp_bridge_stop.py"
     },
     'ja': {
         'zombie_killed_socket': u"[GH MCP] ポート{0}を使用中のゾンビプロセス（Headless）を検出・停止しました。再起動します...",
@@ -69,7 +70,8 @@ MESSAGES = {
         'check_other_instance': u"[GH MCP] 他のRhinoが起動していないか確認してください（タスクマネージャー等）。",
         'server_started': u"[GH MCP] Rhino-Grasshopperアプリ内部 MCPブリッジを起動しました: {0}:{1}",
         'start_failed': u"[GH MCP] サーバーの起動に失敗しました: {0}",
-        'server_stopped': u"[GH MCP] Rhino-Grasshopperアプリ内部 MCPブリッジを停止しました"
+        'server_stopped': u"[GH MCP] Rhino-Grasshopperアプリ内部 MCPブリッジを停止しました",
+        'stop_instruction': u"[GH MCP] 停止するには grasshopper_mcp_bridge_stop.py を実行してください"
     }
 }
 
@@ -1378,17 +1380,27 @@ def server_loop():
             Rhino.RhinoApp.WriteLine(get_message('server_stopped'))
         sc.sticky["gh_mcp_run_server"] = False
 
-# --- Main Entry Point (Toggle) ---
-if __name__ == "__main__":
+def start_server():
+    """Start the bridge. Running the script again while it runs does nothing
+    (it used to stop it, so a startup command plus a manual run turned it off)"""
+    t = sc.sticky["gh_mcp_server_thread"]
+    if sc.sticky["gh_mcp_run_server"] and t is not None and t.is_alive():
+        Rhino.RhinoApp.WriteLine(get_message('server_already_running'))
+        Rhino.RhinoApp.WriteLine(get_message('stop_instruction'))
+        return False
+    sc.sticky["gh_mcp_run_server"] = True
+    t = threading.Thread(target=server_loop)
+    t.daemon = True
+    t.start()
+    sc.sticky["gh_mcp_server_thread"] = t
+    return True
+
+def stop_server():
+    """Ask the server loop to exit (used by grasshopper_mcp_bridge_stop.py)"""
     if sc.sticky["gh_mcp_run_server"]:
-        # Stop
         sc.sticky["gh_mcp_run_server"] = False
         Rhino.RhinoApp.WriteLine("[GH MCP] Stopping Server (wait for loop to exit)...")
-    else:
-        # Start
-        sc.sticky["gh_mcp_run_server"] = True
-        t = threading.Thread(target=server_loop)
-        t.daemon = True
-        t.start()
-        sc.sticky["gh_mcp_server_thread"] = t
-        # Rhino.RhinoApp.WriteLine("[GH MCP] Starting Server Thread...")
+
+# --- Main Entry Point ---
+if __name__ == "__main__":
+    start_server()

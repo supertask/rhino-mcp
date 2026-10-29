@@ -34,7 +34,8 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
 
 ### 前提条件
 
-- Rhino 7 以降
+- Rhino 7（最新版に更新済み）または Rhino 8
+  - Rhino 7 の初期の版（7.1 など）は古いため、**Help**（ヘルプ）→ **Check for Updates**（アップデートを確認）で最新版に更新してから使ってください（Rhino 7 の中での更新は無料です）。
 - Python 3.10〜3.13（`uv` を使う場合は、`.python-version` に従って Python 3.12 が自動で入ります）
 - `uv` (推奨) または `pip`
 
@@ -63,6 +64,15 @@ RhinoMCP は、Model Context Protocol (MCP) を通じて Rhino、Grasshopper な
    uv sync
    ```
 
+   **Windows で AI アプリ（Claude デスクトップアプリなど）にセットアップさせる場合**は、Python の置き場所を AppData の外に指定してから `uv sync` してください。Claude デスクトップアプリは AppData への書き込みを別の場所に振り分けるため、指定しないと `Missing expected target directory for Python minor version link` というエラーで止まります。
+   ```powershell
+   $env:UV_PYTHON_INSTALL_DIR = "$env:USERPROFILE\.uv-python"
+   uv sync
+   ```
+   この場合は、後述の MCP 登録にも同じ `UV_PYTHON_INSTALL_DIR` を指定してください。
+
+   ダウンロードで `invalid peer certificate: UnknownIssuer` と出る場合（会社のセキュリティソフトなど）は、`uv sync --system-certs` で Windows 標準の証明書を使ってください。
+
 ### Rhinoアプリ起動時にMCPブリッジ自動起動させる
 
 Rhino を起動するたびにスクリプトを手動で実行する手間を省くために、以下の手順で自動起動を設定できます：
@@ -85,7 +95,23 @@ Rhino を起動するたびにスクリプトを手動で実行する手間を�
 
 ![Rhino 起動設定](images/rhino_python_command_setting.png)
 
+- AI にセットアップさせる場合も、この欄は**この画面に貼り付ける方法**で設定してください。Rhino 7 の初期の版には、スクリプトからこの欄を書き換える仕組みがありません。
+- ブリッジは何度実行しても二重には起動しません（起動済みなら「既に起動しています」と表示されるだけです）。
+- Grasshopper ブリッジを止めたいときは `rhino_scripts\grasshopper_mcp_bridge_stop.py` を実行してください。
+
 ## 設定
+
+### Claude Code 統合（Claude デスクトップアプリの Code タブを含む）
+
+次のコマンド1行で、どのフォルダーからでも使える形で登録できます（既存の MCP 登録は消えません）。`C:\path\to\rhino-mcp` は実際の配置先に置き換えてください。
+
+```powershell
+claude mcp add --scope user rhino -e UV_PYTHON_INSTALL_DIR=$env:USERPROFILE\.uv-python -- uv run --directory C:\path\to\rhino-mcp -m rhino_mcp.server
+```
+
+- 名前（`rhino`）は `-e` より前に書いてください。逆にすると `Invalid environment variable format` で失敗します。
+- `UV_PYTHON_INSTALL_DIR` は、上の「AI アプリにセットアップさせる場合」の指定で `uv sync` したときに必要です。
+- 登録できたかは `claude mcp get rhino` で確認できます。登録後に開いた新しいチャットから使えます（アプリの再起動は不要です）。
 
 ### Claude Desktop 統合
 
@@ -171,6 +197,10 @@ args = [
   - ポート 9876 (Rhino) または 9999 (Grasshopper) が他のアプリケーションによって使用されていないことを確認してください。
 - **パスエラー**:
   - `claude_desktop_config.json` が正しいプロジェクトルートディレクトリ（`pyproject.toml` がある場所）を指していることを確認してください。
+- **`uv sync` が `Missing expected target directory for Python minor version link` で止まる**:
+  - AI アプリの中から実行したときに起こります。「Python 環境のセットアップ」の `UV_PYTHON_INSTALL_DIR` の指定をしてから、もう一度実行してください。
+- **Rhino を開き直したらつながらなくなった**:
+  - 「Rhinoアプリ起動時にMCPブリッジ自動起動させる」の設定が入っているか確認してください。入っていない場合は、Rhino を起動するたびにブリッジのスクリプトを実行する必要があります。
 
 ## ライセンス
 
