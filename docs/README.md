@@ -34,8 +34,7 @@ The project follows a standard `src` layout:
 
 ### Prerequisites
 
-- Rhino 7 (updated to the latest release) or Rhino 8
-  - Early Rhino 7 releases (such as 7.1) are old. Update with **Help** -> **Check for Updates** first (updates within Rhino 7 are free).
+- Rhino 7 or newer (also confirmed to work on the early Rhino 7.1 release; updating is not required)
 - Python 3.10–3.13 (with `uv`, Python 3.12 is installed automatically as set in `.python-version`)
 - `uv` (Recommended) or `pip`
 
